@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CCTV Viewer</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack-extra.min.css">
+</head>
+<body>
+  <header>
+    <h1>CCTV Viewer</h1>
+    <div class="toolbar">
+      <button id="btn-edit" title="Toggle edit mode">Edit Layout</button>
+      <button id="btn-add" title="Add Camera" hidden>+ Add Camera</button>
+      <button id="btn-columns" title="Change grid columns" hidden>Columns: <span id="col-count">3</span></button>
+      <button id="btn-download" title="Download Config">Export Config</button>
+      <label class="btn-upload" title="Import Config">
+        Import Config
+        <input type="file" id="file-import" accept=".json" hidden>
+      </label>
+    </div>
+  </header>
+
+  <div class="grid-stack" id="camera-grid"></div>
+
+  <!-- Add/Edit Camera Modal -->
+  <div class="modal-overlay" id="modal-overlay" hidden>
+    <div class="modal">
+      <h2 id="modal-title">Add Camera</h2>
+      <form id="camera-form">
+        <input type="hidden" id="cam-id">
+        <label>Name
+          <input type="text" id="cam-name" required placeholder="Front Door">
+        </label>
+        <label>RTSP URL
+          <input type="text" id="cam-url" required placeholder="rtsp://user:pass@192.168.1.100:554/stream">
+        </label>
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel">Cancel</button>
+          <button type="submit" id="btn-save">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack-all.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

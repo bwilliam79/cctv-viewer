@@ -1,0 +1,262 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #0a0a0a;
+  color: #e0e0e0;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #141414;
+  border-bottom: 1px solid #2a2a2a;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+header h1 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #4fc3f7;
+  white-space: nowrap;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+button, .btn-upload {
+  background: #1e1e1e;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.15s;
+}
+
+button:hover, .btn-upload:hover {
+  background: #2a2a2a;
+}
+
+.btn-upload {
+  display: inline-block;
+}
+
+/* Grid */
+.grid-stack {
+  padding: 0;
+  margin: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Remove all gaps between grid items */
+.grid-stack > .grid-stack-item {
+  padding: 0 !important;
+}
+
+.grid-stack-item-content {
+  background: #000;
+  border: 1px solid #1a1a1a;
+  border-radius: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  inset: 0 !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+/* Brighter borders in edit mode */
+.grid-stack.editing > .grid-stack-item > .grid-stack-item-content {
+  border: 1px solid #444;
+}
+
+.camera-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.6);
+  min-height: 28px;
+  flex-shrink: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+/* Show header on hover or in edit mode */
+.grid-stack-item-content:hover .camera-header,
+.grid-stack.editing .camera-header {
+  opacity: 1;
+}
+
+.camera-header .cam-name {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #aaa;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.camera-header .cam-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.camera-header .cam-actions button {
+  padding: 2px 6px;
+  font-size: 0.75rem;
+  border: none;
+  background: transparent;
+  color: #888;
+}
+
+.camera-header .cam-actions button:hover {
+  color: #fff;
+}
+
+.camera-header .cam-actions button.delete:hover {
+  color: #ef5350;
+}
+
+.video-container {
+  flex: 1;
+  position: relative;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-container video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.video-container .status-msg {
+  color: #555;
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 10px;
+  z-index: 1;
+}
+
+.status-msg.error {
+  color: #ef5350;
+}
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.modal-overlay[hidden] {
+  display: none;
+}
+
+.modal {
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 24px;
+  width: 420px;
+  max-width: 90vw;
+}
+
+.modal h2 {
+  font-size: 1.1rem;
+  margin-bottom: 16px;
+  color: #4fc3f7;
+}
+
+.modal label {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+  color: #aaa;
+}
+
+.modal input[type="text"] {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 0.9rem;
+}
+
+.modal input[type="text"]:focus {
+  outline: none;
+  border-color: #4fc3f7;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.modal-actions button[type="submit"] {
+  background: #1565c0;
+  border-color: #1565c0;
+  color: #fff;
+}
+
+.modal-actions button[type="submit"]:hover {
+  background: #1976d2;
+}
+
+/* Edit mode toggle */
+button.active {
+  background: #1565c0;
+  border-color: #1565c0;
+  color: #fff;
+}
+
+button.active:hover {
+  background: #1976d2;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
