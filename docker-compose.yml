@@ -10,7 +10,7 @@ services:
     devices:
       - /dev/dri:/dev/dri
     group_add:
-      - "render"
+      - "991"
       - "video"
     environment:
       - PORT=8090
