@@ -3,7 +3,7 @@ FROM python:3.12-slim
 # Install static ffmpeg with OpenSSL (required for RTSPS / tls_verify support)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates wget xz-utils \
-        libva2 libva-drm2 mesa-va-drivers && \
+        libva2 libva-drm2 mesa-va-drivers nginx && \
     wget -qO /tmp/ffmpeg.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" && \
     tar xf /tmp/ffmpeg.tar.xz --strip-components=2 -C /usr/local/bin --wildcards '*/bin/ffmpeg' '*/bin/ffprobe' && \
     rm /tmp/ffmpeg.tar.xz && \
@@ -18,6 +18,7 @@ WORKDIR /app
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 COPY server.py .
+COPY nginx.conf /etc/nginx/sites-enabled/default
 COPY public/ public/
 
 # Create directories for streams and config
@@ -28,7 +29,7 @@ VOLUME /app/config
 
 EXPOSE 8090
 
-ENV PORT=8090
+ENV API_PORT=8091
 ENV CONFIG_PATH=/app/config/cameras.json
 ENV PYTHONUNBUFFERED=1
 

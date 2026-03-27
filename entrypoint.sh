@@ -10,4 +10,8 @@ if [ -e /dev/dri/renderD128 ]; then
     fi
 fi
 
+# Start nginx for static/HLS file serving
+nginx
+echo "nginx started on port 8090"
+
 exec "$@"

@@ -16,7 +16,7 @@ BASE_DIR = Path(__file__).parent
 CONFIG_PATH = Path(os.environ.get("CONFIG_PATH", BASE_DIR / "config" / "cameras.json"))
 STREAMS_DIR = BASE_DIR / "streams"
 PUBLIC_DIR = BASE_DIR / "public"
-PORT = int(os.environ.get("PORT", 8090))
+PORT = int(os.environ.get("API_PORT", os.environ.get("PORT", 8091)))
 
 # Ensure directories exist
 CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -246,12 +246,8 @@ def stop_stream(cam_id: str):
         shutil.rmtree(output_dir, ignore_errors=True)
 
 
-class CCTVHandler(http.server.SimpleHTTPRequestHandler):
-    """Handle API routes and serve static files."""
-
-    def __init__(self, *args, **kwargs):
-        # Don't call super().__init__ here; it's called by the server
-        super().__init__(*args, directory=str(PUBLIC_DIR), **kwargs)
+class CCTVHandler(http.server.BaseHTTPRequestHandler):
+    """Handle API routes only. Static files and HLS served by nginx."""
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -274,28 +270,8 @@ class CCTVHandler(http.server.SimpleHTTPRequestHandler):
                 running = cam_id in ffmpeg_processes
             m3u8 = STREAMS_DIR / cam_id / "stream.m3u8"
             self._json_response({"running": running, "ready": m3u8.exists()})
-        elif path.startswith("/streams/"):
-            # Serve stream files from STREAMS_DIR
-            rel = path[len("/streams/"):]
-            file_path = STREAMS_DIR / rel
-            try:
-                data = file_path.read_bytes()
-                self.send_response(200)
-                if file_path.suffix == ".m3u8":
-                    self.send_header("Content-Type", "application/vnd.apple.mpegurl")
-                elif file_path.suffix == ".ts":
-                    self.send_header("Content-Type", "video/mp2t")
-                else:
-                    self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Cache-Control", "no-cache")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-            except (FileNotFoundError, OSError):
-                self.send_error(404)
         else:
-            # Serve static files from public/
-            super().do_GET()
+            self.send_error(404)
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -417,9 +393,6 @@ class CCTVHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, format, *args):
-        # Quieter logging - only log errors
-        if args and isinstance(args[0], str) and args[0].startswith("GET /streams/"):
-            return  # Suppress noisy HLS segment requests
         super().log_message(format, *args)
 
 
