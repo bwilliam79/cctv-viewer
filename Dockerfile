@@ -28,5 +28,6 @@ EXPOSE 8090
 
 ENV PORT=8090
 ENV CONFIG_PATH=/app/config/cameras.json
+ENV PYTHONUNBUFFERED=1
 
 CMD ["python", "server.py"]
