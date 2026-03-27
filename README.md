@@ -63,15 +63,7 @@ If you see `software re-encoding` instead, the GPU may not be accessible. Ensure
 
 ## Fullscreen / Kiosk Mode
 
-The toolbar auto-hides and appears when you hover the top edge of the screen. It stays visible while in edit mode.
-
-For a dedicated display or kiosk, append `?fullscreen` to the URL:
-
-```
-http://<your-server>:8090/?fullscreen
-```
-
-The browser enters fullscreen on your first click anywhere on the page (browsers require a user gesture for security). Combined with the auto-hiding header, this gives you a clean, edge-to-edge camera view.
+The toolbar auto-hides and appears when you hover the top edge of the screen. It stays visible while in edit mode. A fullscreen button in the toolbar toggles the browser's Fullscreen API for a clean, edge-to-edge camera view.
 
 ## Configuration
 
