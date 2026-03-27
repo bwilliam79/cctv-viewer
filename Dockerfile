@@ -15,6 +15,8 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Copy application files
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
 COPY server.py .
 COPY public/ public/
 
@@ -30,4 +32,5 @@ ENV PORT=8090
 ENV CONFIG_PATH=/app/config/cameras.json
 ENV PYTHONUNBUFFERED=1
 
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["python", "server.py"]
