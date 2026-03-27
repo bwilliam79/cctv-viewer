@@ -2,7 +2,8 @@ FROM python:3.12-slim
 
 # Install static ffmpeg with OpenSSL (required for RTSPS / tls_verify support)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates wget xz-utils && \
+    apt-get install -y --no-install-recommends ca-certificates wget xz-utils \
+        libva2 libva-drm2 mesa-va-drivers && \
     wget -qO /tmp/ffmpeg.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" && \
     tar xf /tmp/ffmpeg.tar.xz --strip-components=2 -C /usr/local/bin --wildcards '*/bin/ffmpeg' '*/bin/ffprobe' && \
     rm /tmp/ffmpeg.tar.xz && \

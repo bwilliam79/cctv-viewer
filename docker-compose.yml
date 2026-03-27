@@ -7,6 +7,8 @@ services:
       - "8090:8090"
     volumes:
       - ./config:/app/config
+    devices:
+      - /dev/dri:/dev/dri
     environment:
       - PORT=8090
       - CONFIG_PATH=/app/config/cameras.json

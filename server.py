@@ -41,6 +41,28 @@ def save_config(config: dict):
     CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
 
+def detect_vaapi(ffmpeg_bin: str) -> str | None:
+    """Check if VAAPI H.264 encoding is available. Returns render device path or None."""
+    for dev in ("/dev/dri/renderD128", "/dev/dri/renderD129"):
+        if not Path(dev).exists():
+            continue
+        try:
+            result = subprocess.run(
+                [ffmpeg_bin, "-hide_banner", "-init_hw_device", f"vaapi=va:{dev}",
+                 "-f", "lavfi", "-i", "color=black:s=64x64:d=1",
+                 "-vf", "format=nv12,hwupload",
+                 "-c:v", "h264_vaapi", "-frames:v", "1",
+                 "-f", "null", "-"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                print(f"  VAAPI available on {dev}")
+                return dev
+        except Exception:
+            pass
+    return None
+
+
 def resolve_ffmpeg() -> tuple[str, str] | None:
     """Find ffmpeg and ffprobe binaries. Returns (ffmpeg_path, ffprobe_path) or None."""
     ffmpeg_bin = shutil.which("ffmpeg")
@@ -105,7 +127,14 @@ def start_stream(camera: dict):
     codec = probe_codec(url, ffprobe_bin)
     needs_reencode = codec and ("hevc" in codec or "h265" in codec)
 
+    # Check for VAAPI hardware encoding support
+    vaapi_dev = detect_vaapi(ffmpeg_bin) if needs_reencode else None
+
     args = [ffmpeg_bin, "-y"]
+
+    if vaapi_dev:
+        args += ["-init_hw_device", f"vaapi=va:{vaapi_dev}", "-hwaccel", "vaapi",
+                 "-hwaccel_output_format", "vaapi", "-hwaccel_device", vaapi_dev]
 
     if is_rtsps:
         args += [
@@ -118,8 +147,17 @@ def start_stream(camera: dict):
 
     args += ["-i", url]
 
-    if needs_reencode:
-        # HEVC source: re-encode to H.264 at 720p to keep CPU low
+    if needs_reencode and vaapi_dev:
+        # VAAPI hardware encode — near-zero CPU usage
+        args += [
+            "-vf", "scale_vaapi=w=-2:h=720,format=nv12|vaapi",
+            "-c:v", "h264_vaapi",
+            "-g", "30",
+            "-sc_threshold", "0",
+        ]
+        print(f"  HEVC detected — VAAPI hardware re-encode to H.264 720p")
+    elif needs_reencode:
+        # Software fallback: re-encode to H.264 at 720p
         args += [
             "-c:v", "libx264",
             "-preset", "ultrafast",
@@ -128,7 +166,7 @@ def start_stream(camera: dict):
             "-g", "30",
             "-sc_threshold", "0",
         ]
-        print(f"  HEVC detected — re-encoding to H.264 720p")
+        print(f"  HEVC detected — software re-encoding to H.264 720p")
     else:
         # H.264 source: passthrough, no CPU cost
         args += [
