@@ -10,6 +10,7 @@ A self-hosted web interface for viewing RTSP/RTSPS camera feeds in a draggable, 
 - **RTSPS support** — handles TLS-encrypted RTSP streams (e.g. UniFi Protect)
 - **Persistent config** — camera URLs and layout saved to a JSON file
 - **Import/Export** — backup and restore your camera configuration
+- **Fullscreen mode** — auto-hiding header with fullscreen support; use `?fullscreen` URL parameter for kiosk displays
 - **Docker deployment** with a single `docker compose up`
 
 ## Architecture
@@ -59,6 +60,18 @@ HEVC detected — VAAPI hardware re-encode to H.264 720p
 ```
 
 If you see `software re-encoding` instead, the GPU may not be accessible. Ensure `/dev/dri` exists on the host and the render device is readable.
+
+## Fullscreen / Kiosk Mode
+
+The toolbar auto-hides and appears when you hover the top edge of the screen. It stays visible while in edit mode.
+
+For a dedicated display or kiosk, append `?fullscreen` to the URL:
+
+```
+http://<your-server>:8090/?fullscreen
+```
+
+This triggers the browser's Fullscreen API on load (the browser may require one initial click to allow it). Combined with the auto-hiding header, this gives you a clean, edge-to-edge camera view.
 
 ## Configuration
 
