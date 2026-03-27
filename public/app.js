@@ -33,13 +33,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btn-download").addEventListener("click", downloadConfig);
   document.getElementById("file-import").addEventListener("change", importConfig);
   document.getElementById("btn-columns").addEventListener("click", cycleColumns);
+  document.getElementById("btn-fullscreen").addEventListener("click", toggleFullscreen);
+
+  initHeaderAutoHide();
+
+  // Auto-enter fullscreen if ?fullscreen is in the URL
+  if (new URLSearchParams(window.location.search).has("fullscreen")) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  }
 });
 
 // --- Viewport Fit ---
 function fitGridToViewport() {
-  const headerEl = document.querySelector("header");
-  const headerHeight = headerEl ? headerEl.offsetHeight : 0;
-  const availableHeight = window.innerHeight - headerHeight;
+  const availableHeight = window.innerHeight;
 
   // Find the max row bottom in the grid
   let maxRow = 1;
@@ -59,6 +65,7 @@ function toggleEditMode() {
   const btn = document.getElementById("btn-edit");
   const gridEl = document.getElementById("camera-grid");
 
+  const header = document.getElementById("main-header");
   if (editing) {
     btn.textContent = "Save Layout";
     btn.classList.add("active");
@@ -67,6 +74,7 @@ function toggleEditMode() {
     gridEl.classList.add("editing");
     grid.enableMove(true);
     grid.enableResize(true);
+    header.classList.add("visible");
   } else {
     btn.textContent = "Edit Layout";
     btn.classList.remove("active");
@@ -75,6 +83,7 @@ function toggleEditMode() {
     gridEl.classList.remove("editing");
     grid.enableMove(false);
     grid.enableResize(false);
+    header.classList.remove("visible");
     // Force save current layout and fit to viewport
     saveCurrentLayout();
     fitGridToViewport();
@@ -406,4 +415,44 @@ function escHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
+}
+
+// --- Fullscreen ---
+function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  } else {
+    document.documentElement.requestFullscreen().catch(() => {});
+  }
+}
+
+document.addEventListener("fullscreenchange", () => {
+  const btn = document.getElementById("btn-fullscreen");
+  btn.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
+  fitGridToViewport();
+});
+
+// --- Header Auto-Hide ---
+function initHeaderAutoHide() {
+  const header = document.getElementById("main-header");
+  const trigger = document.getElementById("header-trigger");
+  let hideTimeout;
+
+  function showHeader() {
+    clearTimeout(hideTimeout);
+    header.classList.add("visible");
+  }
+
+  function scheduleHide() {
+    clearTimeout(hideTimeout);
+    hideTimeout = setTimeout(() => {
+      // Don't hide if in edit mode
+      if (!editing) header.classList.remove("visible");
+    }, 600);
+  }
+
+  trigger.addEventListener("mouseenter", showHeader);
+  header.addEventListener("mouseenter", showHeader);
+  header.addEventListener("mouseleave", scheduleHide);
+  trigger.addEventListener("mouseleave", scheduleHide);
 }

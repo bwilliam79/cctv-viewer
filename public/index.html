@@ -9,19 +9,21 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack-extra.min.css">
 </head>
 <body>
-  <header>
+  <header id="main-header">
     <h1>CCTV Viewer</h1>
     <div class="toolbar">
       <button id="btn-edit" title="Toggle edit mode">Edit Layout</button>
       <button id="btn-add" title="Add Camera" hidden>+ Add Camera</button>
       <button id="btn-columns" title="Change grid columns" hidden>Columns: <span id="col-count">3</span></button>
-      <button id="btn-download" title="Download Config">Export Config</button>
+      <button id="btn-download" title="Download Config">Export</button>
       <label class="btn-upload" title="Import Config">
-        Import Config
+        Import
         <input type="file" id="file-import" accept=".json" hidden>
       </label>
+      <button id="btn-fullscreen" title="Toggle fullscreen">Fullscreen</button>
     </div>
   </header>
+  <div id="header-trigger"></div>
 
   <div class="grid-stack" id="camera-grid"></div>
 
