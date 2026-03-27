@@ -49,7 +49,7 @@ def detect_vaapi(ffmpeg_bin: str) -> str | None:
         try:
             result = subprocess.run(
                 [ffmpeg_bin, "-hide_banner", "-init_hw_device", f"vaapi=va:{dev}",
-                 "-f", "lavfi", "-i", "color=black:s=64x64:d=1",
+                 "-f", "lavfi", "-i", "color=black:s=128x128:d=1",
                  "-vf", "format=nv12,hwupload",
                  "-c:v", "h264_vaapi", "-frames:v", "1",
                  "-f", "null", "-"],
