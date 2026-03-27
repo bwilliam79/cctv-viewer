@@ -10,5 +10,5 @@ services:
     devices:
       - /dev/dri:/dev/dri
     environment:
-      - PORT=8090
+      - API_PORT=8091
       - CONFIG_PATH=/app/config/cameras.json
