@@ -38,8 +38,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   initHeaderAutoHide();
 
   // Auto-enter fullscreen if ?fullscreen is in the URL
+  // Browsers require a user gesture, so enter on first click
   if (new URLSearchParams(window.location.search).has("fullscreen")) {
-    document.documentElement.requestFullscreen().catch(() => {});
+    const goFullscreen = () => {
+      document.documentElement.requestFullscreen().catch(() => {});
+      document.removeEventListener("click", goFullscreen);
+    };
+    document.addEventListener("click", goFullscreen);
   }
 });
 

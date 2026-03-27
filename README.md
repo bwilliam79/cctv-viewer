@@ -71,7 +71,7 @@ For a dedicated display or kiosk, append `?fullscreen` to the URL:
 http://<your-server>:8090/?fullscreen
 ```
 
-This triggers the browser's Fullscreen API on load (the browser may require one initial click to allow it). Combined with the auto-hiding header, this gives you a clean, edge-to-edge camera view.
+The browser enters fullscreen on your first click anywhere on the page (browsers require a user gesture for security). Combined with the auto-hiding header, this gives you a clean, edge-to-edge camera view.
 
 ## Configuration
 
