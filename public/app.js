@@ -4,6 +4,7 @@ let grid;
 let cameras = [];
 let columns = 3;
 let editing = false;
+let configHash = "";
 const players = new Map(); // cameraId -> { hls, video, pollTimer }
 
 // --- Init ---
@@ -36,6 +37,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btn-fullscreen").addEventListener("click", toggleFullscreen);
 
   initHeaderAutoHide();
+  initConfigWatcher();
 
 });
 
@@ -451,4 +453,25 @@ function initHeaderAutoHide() {
   header.addEventListener("mouseenter", showHeader);
   header.addEventListener("mouseleave", scheduleHide);
   trigger.addEventListener("mouseleave", scheduleHide);
+}
+
+// --- Config Watcher ---
+function initConfigWatcher() {
+  setInterval(async () => {
+    if (editing) return;
+    try {
+      const resp = await fetch("/api/config");
+      const text = await resp.text();
+      if (!configHash) {
+        configHash = text;
+        return;
+      }
+      if (text !== configHash) {
+        // Config changed externally — reload the page
+        window.location.reload();
+      }
+    } catch {
+      // Server unavailable, skip
+    }
+  }, 3000);
 }

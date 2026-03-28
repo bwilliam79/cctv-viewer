@@ -12,6 +12,8 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  cursor: none;
+  caret-color: transparent;
 }
 
 header {
