@@ -10,7 +10,8 @@ A self-hosted web interface for viewing RTSP/RTSPS camera feeds in a draggable, 
 - **RTSPS support** — handles TLS-encrypted RTSP streams (e.g. UniFi Protect)
 - **Persistent config** — camera URLs and layout saved to a JSON file
 - **Import/Export** — backup and restore your camera configuration
-- **Fullscreen mode** — auto-hiding header with fullscreen support; use `?fullscreen` URL parameter for kiosk displays
+- **Fullscreen mode** — auto-hiding header with fullscreen toggle button
+- **Auto-refresh** — detects external config changes and reloads the UI automatically
 - **Docker deployment** with a single `docker compose up`
 
 ## Architecture
@@ -64,6 +65,47 @@ If you see `software re-encoding` instead, the GPU may not be accessible. Ensure
 ## Fullscreen / Kiosk Mode
 
 The toolbar auto-hides and appears when you hover the top edge of the screen. It stays visible while in edit mode. A fullscreen button in the toolbar toggles the browser's Fullscreen API for a clean, edge-to-edge camera view.
+
+For a dedicated kiosk display, launch Chrome with `--kiosk` to start in fullscreen:
+
+```bash
+google-chrome --kiosk --no-first-run --disable-session-crashed-bubble \
+  --noerrdialogs --disable-infobars http://<your-server>:8090
+```
+
+The mouse cursor is hidden automatically in the viewer for a clean kiosk experience.
+
+## Auto-Refresh
+
+The frontend polls the server config every 3 seconds. When the configuration changes externally (e.g. cameras added/removed or layout updated via the API from another machine), the kiosk display reloads automatically — no manual refresh needed.
+
+## REST API
+
+All endpoints are served through nginx on port 8090 and proxied to the Python API internally.
+
+### Cameras
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/cameras` | Add a camera. Body: `{"name": "...", "url": "rtsp://..."}` |
+| `PUT` | `/api/cameras/:id` | Update a camera. Body: `{"name": "...", "url": "..."}` |
+| `DELETE` | `/api/cameras/:id` | Remove a camera and stop its stream |
+| `GET` | `/api/cameras/:id/status` | Stream status: `{"running": bool, "ready": bool}` |
+
+### Config & Layout
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/config` | Full config (cameras + layout) |
+| `GET` | `/api/config/download` | Download config as `cctv-config.json` attachment |
+| `POST` | `/api/config/import` | Replace entire config. Body: full config JSON |
+| `PUT` | `/api/layout` | Update grid layout. Body: `{"columns": N, "items": [...]}` |
+
+#### Layout item format
+
+```json
+{"id": "camera-uuid", "x": 0, "y": 0, "w": 1, "h": 1}
+```
 
 ## Configuration
 
