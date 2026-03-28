@@ -62,19 +62,6 @@ HEVC detected — VAAPI hardware re-encode to H.264 720p
 
 If you see `software re-encoding` instead, the GPU may not be accessible. Ensure `/dev/dri` exists on the host and the render device is readable.
 
-## Fullscreen / Kiosk Mode
-
-The toolbar auto-hides and appears when you hover the top edge of the screen. It stays visible while in edit mode. A fullscreen button in the toolbar toggles the browser's Fullscreen API for a clean, edge-to-edge camera view.
-
-For a dedicated kiosk display, launch Chrome with `--kiosk` to start in fullscreen:
-
-```bash
-google-chrome --kiosk --no-first-run --disable-session-crashed-bubble \
-  --noerrdialogs --disable-infobars http://<your-server>:8090
-```
-
-The mouse cursor is hidden automatically in the viewer for a clean kiosk experience.
-
 ## Auto-Refresh
 
 The frontend polls the server config every 3 seconds. When the configuration changes externally (e.g. cameras added/removed or layout updated via the API from another machine), the kiosk display reloads automatically — no manual refresh needed.
