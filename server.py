@@ -8,6 +8,7 @@ import subprocess
 import shutil
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -221,10 +222,10 @@ def start_stream(camera: dict):
                 print(f'  [{camera["name"]}] {line}')
         with process_lock:
             ffmpeg_processes.pop(cam_id, None)
-        # Auto-restart if unexpected exit
+        # Auto-restart on any exit (camera streams should run forever)
         config = load_config()
         still_exists = any(c["id"] == cam_id for c in config["cameras"])
-        if still_exists and code != 0:
+        if still_exists:
             print(f'Restarting stream for "{camera["name"]}" in 5s...')
             threading.Timer(5.0, start_stream, args=[camera]).start()
 
@@ -406,6 +407,30 @@ def main():
     print(f"Loaded {len(config['cameras'])} camera(s) from config")
     for camera in config["cameras"]:
         start_stream(camera)
+
+    def watchdog():
+        """Detect ffmpeg processes that exited but whose monitor threads are stuck on a
+        blocked pipe read (e.g. a VAAPI helper subprocess inherited the stderr fd).
+        Runs every 30 s and force-restarts any dead stream."""
+        while True:
+            time.sleep(30)
+            cfg = load_config()
+            with process_lock:
+                procs_snapshot = dict(ffmpeg_processes)
+            for cam in cfg["cameras"]:
+                cid = cam["id"]
+                proc = procs_snapshot.get(cid)
+                if proc is not None and proc.poll() is not None:
+                    # Process has exited but monitor thread hasn't cleaned up yet
+                    print(f'Watchdog: "{cam["name"]}" exited (code {proc.poll()}), forcing restart')
+                    with process_lock:
+                        ffmpeg_processes.pop(cid, None)
+                    threading.Thread(target=start_stream, args=[cam], daemon=True).start()
+                elif proc is None:
+                    # Not tracked at all — start it
+                    threading.Thread(target=start_stream, args=[cam], daemon=True).start()
+
+    threading.Thread(target=watchdog, daemon=True).start()
 
     server = ThreadedHTTPServer(("0.0.0.0", PORT), CCTVHandler)
     print(f"CCTV Viewer running on http://0.0.0.0:{PORT}")
