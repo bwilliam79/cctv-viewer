@@ -19,6 +19,18 @@ STREAMS_DIR = BASE_DIR / "streams"
 PUBLIC_DIR = BASE_DIR / "public"
 PORT = int(os.environ.get("API_PORT", os.environ.get("PORT", 8091)))
 
+# 256 KB is roughly 1000× the size of a typical camera-config JSON — easily
+# enough headroom for a large import while bounding what a rogue client can
+# make us buffer.
+MAX_BODY_BYTES = 256 * 1024
+
+# Camera URLs end up as CLI arguments to ffmpeg/ffprobe, which support many
+# protocols beyond RTSP (file://, http://, srt://, concat:, etc.). An
+# unvalidated URL could reach internal HTTP services, local files, or cloud
+# metadata endpoints when the stream starts. We restrict to RTSP schemes —
+# everything else is rejected at the config edge.
+ALLOWED_URL_SCHEMES = ("rtsp", "rtsps")
+
 # Ensure directories exist
 CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 STREAMS_DIR.mkdir(parents=True, exist_ok=True)
@@ -40,6 +52,22 @@ def load_config() -> dict:
 def save_config(config: dict):
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+
+def validate_camera_url(url: str) -> str | None:
+    """Validate a camera URL. Returns error message, or None if OK."""
+    if not url:
+        return "URL is required"
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return "URL could not be parsed"
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ALLOWED_URL_SCHEMES:
+        return f"URL scheme must be one of: {', '.join(ALLOWED_URL_SCHEMES)}"
+    if not parsed.hostname:
+        return "URL must include a hostname"
+    return None
 
 
 def detect_vaapi(ffmpeg_bin: str) -> str | None:
@@ -277,13 +305,19 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         body = self._read_body()
+        if body is None:
+            return
 
         if path == "/api/cameras":
             data = json.loads(body)
             name = data.get("name", "").strip()
             url = data.get("url", "").strip()
-            if not name or not url:
-                self._json_response({"error": "name and url are required"}, 400)
+            if not name:
+                self._json_response({"error": "name is required"}, 400)
+                return
+            url_err = validate_camera_url(url)
+            if url_err:
+                self._json_response({"error": url_err}, 400)
                 return
 
             config = load_config()
@@ -307,6 +341,17 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
                 self._json_response({"error": "Invalid config format"}, 400)
                 return
 
+            # Validate all camera URLs up front so a bad import can't partially
+            # apply (stopping current streams and then leaving us in a weird
+            # half-configured state).
+            for cam in new_config["cameras"]:
+                url_err = validate_camera_url((cam.get("url") or "").strip())
+                if url_err:
+                    self._json_response(
+                        {"error": f"Invalid camera '{cam.get('name', '?')}': {url_err}"}, 400
+                    )
+                    return
+
             # Stop all current streams
             with process_lock:
                 ids = list(ffmpeg_processes.keys())
@@ -324,6 +369,8 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
     def do_PUT(self):
         path = urlparse(self.path).path
         body = self._read_body()
+        if body is None:
+            return
         data = json.loads(body)
 
         if path.startswith("/api/cameras/"):
@@ -339,6 +386,10 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
                     camera[key] = data[key]
 
             if "url" in data and data["url"] != camera["url"]:
+                url_err = validate_camera_url((data["url"] or "").strip())
+                if url_err:
+                    self._json_response({"error": url_err}, 400)
+                    return
                 camera["url"] = data["url"]
                 stop_stream(cam_id)
                 start_stream(camera)
@@ -381,8 +432,20 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-    def _read_body(self) -> bytes:
-        length = int(self.headers.get("Content-Length", 0))
+    def _read_body(self):
+        """Read request body, capped at MAX_BODY_BYTES.
+
+        Returns the body bytes on success, or None if the request is
+        malformed / oversized (a response has already been sent).
+        """
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self._json_response({"error": "Invalid Content-Length"}, 400)
+            return None
+        if length < 0 or length > MAX_BODY_BYTES:
+            self._json_response({"error": f"Request body exceeds {MAX_BODY_BYTES} bytes"}, 413)
+            return None
         return self.rfile.read(length)
 
     def _json_response(self, data, status=200):
