@@ -35,8 +35,12 @@ ALLOWED_URL_SCHEMES = ("rtsp", "rtsps")
 CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 STREAMS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Active ffmpeg processes: camera_id -> subprocess.Popen
-ffmpeg_processes: dict[str, subprocess.Popen] = {}
+# Active ffmpeg processes: camera_id -> subprocess.Popen, or _STARTING while a
+# spawn is in progress. The sentinel reserves the slot across the slow probe/
+# detect work so concurrent start_stream calls don't both race past the guard
+# and spawn duplicate ffmpegs writing to the same HLS output directory.
+_STARTING = object()
+ffmpeg_processes: dict = {}
 process_lock = threading.Lock()
 
 
@@ -139,7 +143,43 @@ def start_stream(camera: dict):
     with process_lock:
         if cam_id in ffmpeg_processes:
             return
+        ffmpeg_processes[cam_id] = _STARTING
 
+    proc = None
+    try:
+        proc = _spawn_ffmpeg(camera)
+    finally:
+        if proc is None:
+            with process_lock:
+                if ffmpeg_processes.get(cam_id) is _STARTING:
+                    ffmpeg_processes.pop(cam_id, None)
+
+    if proc is None:
+        return
+
+    # Claim the slot. If stop_stream popped our reservation while we were
+    # spawning, the camera has been deleted / re-added — kill the proc
+    # we just started rather than leaking it.
+    with process_lock:
+        if ffmpeg_processes.get(cam_id) is _STARTING:
+            ffmpeg_processes[cam_id] = proc
+            claimed = True
+        else:
+            claimed = False
+
+    if not claimed:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        return
+
+    threading.Thread(target=_monitor_stream, args=(camera, proc), daemon=True).start()
+
+
+def _spawn_ffmpeg(camera: dict):
+    cam_id = camera["id"]
     output_dir = STREAMS_DIR / cam_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -149,7 +189,7 @@ def start_stream(camera: dict):
     paths = resolve_ffmpeg()
     if not paths:
         print("ERROR: ffmpeg not found. Install ffmpeg and ensure it's on your PATH.")
-        return
+        return None
     ffmpeg_bin, ffprobe_bin = paths
 
     # Probe the codec to decide copy vs re-encode
@@ -217,7 +257,7 @@ def start_stream(camera: dict):
     print(f'Starting stream for camera "{camera["name"]}" ({cam_id})')
     print(f'  Command: {" ".join(args[:6])}...')
     try:
-        proc = subprocess.Popen(
+        return subprocess.Popen(
             args,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -225,50 +265,56 @@ def start_stream(camera: dict):
         )
     except FileNotFoundError:
         print("ERROR: ffmpeg not found. Install ffmpeg and ensure it's on your PATH.")
+        return None
+
+
+def _monitor_stream(camera: dict, proc: subprocess.Popen):
+    cam_id = camera["id"]
+    stderr_output = []
+    for line in proc.stderr:
+        decoded = line.decode(errors="replace").strip()
+        if decoded:
+            stderr_output.append(decoded)
+            if "error" in decoded.lower() or "fatal" in decoded.lower():
+                print(f'  [{camera["name"]}] {decoded}')
+    proc.wait()
+    code = proc.returncode
+    print(f'Stream for "{camera["name"]}" exited with code {code}')
+    if code != 0 and stderr_output:
+        for line in stderr_output[-5:]:
+            print(f'  [{camera["name"]}] {line}')
+
+    # Only pop and restart if the tracked proc is still ours. The watchdog
+    # may have force-replaced us (stuck-monitor recovery) — in that case,
+    # leave the new entry alone and don't schedule a restart.
+    with process_lock:
+        if ffmpeg_processes.get(cam_id) is proc:
+            ffmpeg_processes.pop(cam_id, None)
+            should_restart = True
+        else:
+            should_restart = False
+
+    if not should_restart:
         return
 
-    with process_lock:
-        ffmpeg_processes[cam_id] = proc
-
-    # Monitor in background thread
-    def monitor():
-        # Read stderr for error reporting
-        stderr_output = []
-        for line in proc.stderr:
-            decoded = line.decode(errors="replace").strip()
-            if decoded:
-                stderr_output.append(decoded)
-                # Print errors immediately
-                if "error" in decoded.lower() or "fatal" in decoded.lower():
-                    print(f'  [{camera["name"]}] {decoded}')
-        proc.wait()
-        code = proc.returncode
-        print(f'Stream for "{camera["name"]}" exited with code {code}')
-        if code != 0 and stderr_output:
-            # Print last few lines of stderr for debugging
-            for line in stderr_output[-5:]:
-                print(f'  [{camera["name"]}] {line}')
-        with process_lock:
-            ffmpeg_processes.pop(cam_id, None)
-        # Auto-restart on any exit (camera streams should run forever)
-        config = load_config()
-        still_exists = any(c["id"] == cam_id for c in config["cameras"])
-        if still_exists:
-            print(f'Restarting stream for "{camera["name"]}" in 5s...')
-            threading.Timer(5.0, start_stream, args=[camera]).start()
-
-    threading.Thread(target=monitor, daemon=True).start()
+    config = load_config()
+    still_exists = any(c["id"] == cam_id for c in config["cameras"])
+    if still_exists:
+        print(f'Restarting stream for "{camera["name"]}" in 5s...')
+        threading.Timer(5.0, start_stream, args=[camera]).start()
 
 
 def stop_stream(cam_id: str):
     with process_lock:
-        proc = ffmpeg_processes.pop(cam_id, None)
-    if proc:
-        proc.terminate()
+        entry = ffmpeg_processes.pop(cam_id, None)
+    # If entry is _STARTING, an in-progress start_stream will see the missing
+    # reservation when it tries to claim the slot and terminate its own proc.
+    if entry is not None and entry is not _STARTING:
+        entry.terminate()
         try:
-            proc.wait(timeout=5)
+            entry.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            entry.kill()
     # Clean up stream files
     output_dir = STREAMS_DIR / cam_id
     if output_dir.exists():
@@ -482,15 +528,25 @@ def main():
                 procs_snapshot = dict(ffmpeg_processes)
             for cam in cfg["cameras"]:
                 cid = cam["id"]
-                proc = procs_snapshot.get(cid)
-                if proc is not None and proc.poll() is not None:
-                    # Process has exited but monitor thread hasn't cleaned up yet
-                    print(f'Watchdog: "{cam["name"]}" exited (code {proc.poll()}), forcing restart')
+                entry = procs_snapshot.get(cid)
+                if entry is _STARTING:
+                    # A spawn is in progress — don't interfere
+                    continue
+                if entry is not None and entry.poll() is not None:
+                    # Process has exited; force-restart only if it's still the
+                    # tracked entry (don't race with the monitor thread).
                     with process_lock:
-                        ffmpeg_processes.pop(cid, None)
-                    threading.Thread(target=start_stream, args=[cam], daemon=True).start()
-                elif proc is None:
-                    # Not tracked at all — start it
+                        if ffmpeg_processes.get(cid) is entry:
+                            ffmpeg_processes.pop(cid, None)
+                            do_restart = True
+                        else:
+                            do_restart = False
+                    if do_restart:
+                        print(f'Watchdog: "{cam["name"]}" exited (code {entry.poll()}), forcing restart')
+                        threading.Thread(target=start_stream, args=[cam], daemon=True).start()
+                elif entry is None:
+                    # Not tracked at all — start it (start_stream's reservation
+                    # protects against duplicate spawns from concurrent triggers).
                     threading.Thread(target=start_stream, args=[cam], daemon=True).start()
 
     threading.Thread(target=watchdog, daemon=True).start()
