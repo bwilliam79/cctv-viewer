@@ -36,6 +36,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btn-columns").addEventListener("click", cycleColumns);
   document.getElementById("btn-fullscreen").addEventListener("click", toggleFullscreen);
 
+  document.getElementById("camera-grid").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const camId = btn.getAttribute("data-camera-id");
+    if (btn.dataset.action === "edit") openEditModal(camId);
+    else if (btn.dataset.action === "delete") deleteCamera(camId);
+  });
+
   initHeaderAutoHide();
   initConfigWatcher();
 
@@ -213,8 +221,8 @@ function addCameraWidget(cam) {
     <div class="camera-header">
       <span class="cam-name" title="${escHtml(cam.name)}">${escHtml(cam.name)}</span>
       <span class="cam-actions">
-        <button class="edit" onclick="openEditModal('${id}')" title="Edit">&#9998;</button>
-        <button class="delete" onclick="deleteCamera('${id}')" title="Delete">&times;</button>
+        <button class="edit" data-action="edit" data-camera-id="${escHtml(id)}" title="Edit">&#9998;</button>
+        <button class="delete" data-action="delete" data-camera-id="${escHtml(id)}" title="Delete">&times;</button>
       </span>
     </div>
     <div class="video-container" id="vc-${id}">
@@ -328,7 +336,7 @@ function openAddModal() {
   document.getElementById("cam-name").focus();
 }
 
-window.openEditModal = function (id) {
+function openEditModal(id) {
   const cam = cameras.find((c) => c.id === id);
   if (!cam) return;
   document.getElementById("modal-title").textContent = "Edit Camera";
@@ -337,7 +345,7 @@ window.openEditModal = function (id) {
   document.getElementById("cam-url").value = cam.url;
   document.getElementById("modal-overlay").hidden = false;
   document.getElementById("cam-name").focus();
-};
+}
 
 function closeModal() {
   document.getElementById("modal-overlay").hidden = true;
@@ -396,7 +404,7 @@ async function onFormSubmit(e) {
   closeModal();
 }
 
-window.deleteCamera = async function (id) {
+async function deleteCamera(id) {
   if (!confirm("Remove this camera?")) return;
 
   const resp = await fetch(`/api/cameras/${id}`, { method: "DELETE" });
@@ -407,7 +415,7 @@ window.deleteCamera = async function (id) {
     cameras = cameras.filter((c) => c.id !== id);
     fitGridToViewport();
   }
-};
+}
 
 function escHtml(str) {
   const div = document.createElement("div");

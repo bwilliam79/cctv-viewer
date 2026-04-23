@@ -401,10 +401,17 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
                 self._json_response({"error": "Invalid config format"}, 400)
                 return
 
-            # Validate all camera URLs up front so a bad import can't partially
-            # apply (stopping current streams and then leaving us in a weird
-            # half-configured state).
+            # Validate all camera URLs *and ids* up front so a bad import can't
+            # partially apply (stopping current streams and then leaving us in
+            # a weird half-configured state). Ids must be uuid4 strings — the
+            # frontend interpolates them into onclick handlers, so a non-uuid
+            # id (e.g. "'; alert(1); //") in a crafted import would XSS.
             for cam in new_config["cameras"]:
+                if not is_valid_cam_id(cam.get("id", "")):
+                    self._json_response(
+                        {"error": f"Invalid camera '{cam.get('name', '?')}': id must be a uuid"}, 400
+                    )
+                    return
                 url_err = validate_camera_url((cam.get("url") or "").strip())
                 if url_err:
                     self._json_response(
