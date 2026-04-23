@@ -51,6 +51,10 @@ STREAMS_DIR.mkdir(parents=True, exist_ok=True)
 _STARTING = object()
 ffmpeg_processes: dict = {}
 process_lock = threading.Lock()
+# Flipped in the SIGTERM/SIGINT handler so restart paths (monitor-thread Timer,
+# watchdog, Timer callbacks already in flight) bail out instead of spawning new
+# ffmpegs into a directory tree that stop_stream is concurrently rmtree'ing.
+_shutdown = threading.Event()
 
 
 def load_config() -> dict:
@@ -148,6 +152,8 @@ def probe_codec(url: str, ffprobe_bin: str) -> str | None:
 
 
 def start_stream(camera: dict):
+    if _shutdown.is_set():
+        return
     cam_id = camera["id"]
     with process_lock:
         if cam_id in ffmpeg_processes:
@@ -308,9 +314,13 @@ def _monitor_stream(camera: dict, proc: subprocess.Popen):
 
     config = load_config()
     still_exists = any(c["id"] == cam_id for c in config["cameras"])
-    if still_exists:
+    if still_exists and not _shutdown.is_set():
         print(f'Restarting stream for "{camera["name"]}" in 5s...')
-        threading.Timer(5.0, start_stream, args=[camera]).start()
+        # Daemon=True so the pending Timer doesn't keep the interpreter alive
+        # when SIGTERM arrives in the 5 s window between the exit and the fire.
+        timer = threading.Timer(5.0, start_stream, args=[camera])
+        timer.daemon = True
+        timer.start()
 
 
 def stop_stream(cam_id: str):
@@ -556,9 +566,14 @@ def main():
         start_stream(camera)
 
     def watchdog():
-        """Detect ffmpeg processes that exited but whose monitor threads are stuck on a
-        blocked pipe read (e.g. a VAAPI helper subprocess inherited the stderr fd).
-        Runs every 30 s and force-restarts any dead stream."""
+        """Force-restart ffmpegs that either exited (monitor stuck on a blocked
+        pipe read, e.g. a VAAPI helper inherited the stderr fd) or are still
+        running but have stopped producing HLS segments (stalled RTSP where
+        ffmpeg sits waiting on the socket instead of erroring out — the
+        "frozen feed" case the monitor thread never sees). Runs every 30 s."""
+        # hls_time is 2 s, so a healthy stream writes m3u8 every ~2 s. 20 s
+        # means ~10 missed segments — well past any plausible jitter.
+        FREEZE_THRESHOLD = 20.0
         while True:
             time.sleep(30)
             cfg = load_config()
@@ -568,24 +583,44 @@ def main():
                 cid = cam["id"]
                 entry = procs_snapshot.get(cid)
                 if entry is _STARTING:
-                    # A spawn is in progress — don't interfere
                     continue
-                if entry is not None and entry.poll() is not None:
-                    # Process has exited; force-restart only if it's still the
-                    # tracked entry (don't race with the monitor thread).
-                    with process_lock:
-                        if ffmpeg_processes.get(cid) is entry:
-                            ffmpeg_processes.pop(cid, None)
-                            do_restart = True
-                        else:
-                            do_restart = False
-                    if do_restart:
-                        print(f'Watchdog: "{cam["name"]}" exited (code {entry.poll()}), forcing restart')
-                        threading.Thread(target=start_stream, args=[cam], daemon=True).start()
-                elif entry is None:
-                    # Not tracked at all — start it (start_stream's reservation
-                    # protects against duplicate spawns from concurrent triggers).
+                if entry is None:
                     threading.Thread(target=start_stream, args=[cam], daemon=True).start()
+                    continue
+
+                exit_code = entry.poll()
+                reason = None
+                if exit_code is not None:
+                    reason = f"exited (code {exit_code})"
+                else:
+                    m3u8 = STREAMS_DIR / cid / "stream.m3u8"
+                    try:
+                        age = time.time() - m3u8.stat().st_mtime
+                    except OSError:
+                        # No m3u8 yet — stream is still spinning up. Leave it.
+                        age = None
+                    if age is not None and age > FREEZE_THRESHOLD:
+                        reason = f"frozen (no m3u8 update for {age:.0f}s)"
+
+                if reason is None:
+                    continue
+
+                # Claim the slot before terminating so we don't race the
+                # monitor thread's own restart path.
+                with process_lock:
+                    if ffmpeg_processes.get(cid) is not entry:
+                        continue
+                    ffmpeg_processes.pop(cid, None)
+
+                if exit_code is None:
+                    entry.terminate()
+                    try:
+                        entry.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        entry.kill()
+
+                print(f'Watchdog: "{cam["name"]}" {reason}, forcing restart')
+                threading.Thread(target=start_stream, args=[cam], daemon=True).start()
 
     threading.Thread(target=watchdog, daemon=True).start()
 
@@ -594,6 +629,7 @@ def main():
 
     def shutdown(signum, frame):
         print("\nShutting down...")
+        _shutdown.set()
         with process_lock:
             ids = list(ffmpeg_processes.keys())
         for cam_id in ids:
