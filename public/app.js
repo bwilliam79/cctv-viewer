@@ -277,7 +277,27 @@ function pollStream(cam) {
 
 function startPlayer(cameraId, videoEl) {
   const src = `/streams/${cameraId}/stream.m3u8`;
-  const existing = players.get(cameraId);
+
+  function restartPlayer() {
+    const player = players.get(cameraId);
+    if (player) {
+      if (player.stallWatchdog) clearInterval(player.stallWatchdog);
+      if (player.hls) player.hls.destroy();
+    }
+    const statusEl = document.getElementById(`status-${cameraId}`);
+    if (statusEl) {
+      statusEl.textContent = "Stream error - retrying...";
+      statusEl.style.display = "";
+      statusEl.classList.add("error");
+    }
+    setTimeout(() => {
+      if (statusEl) {
+        statusEl.style.display = "none";
+        statusEl.classList.remove("error");
+      }
+      startPlayer(cameraId, videoEl);
+    }, 3000);
+  }
 
   if (Hls.isSupported()) {
     const hls = new Hls({
@@ -292,23 +312,24 @@ function startPlayer(cameraId, videoEl) {
       videoEl.play().catch(() => {});
     });
     hls.on(Hls.Events.ERROR, (_event, data) => {
-      if (data.fatal) {
-        const statusEl = document.getElementById(`status-${cameraId}`);
-        if (statusEl) {
-          statusEl.textContent = "Stream error - retrying...";
-          statusEl.style.display = "";
-          statusEl.classList.add("error");
-        }
-        // Retry after a delay
-        setTimeout(() => {
-          if (statusEl) statusEl.style.display = "none";
-          hls.loadSource(src);
-        }, 3000);
-      }
+      if (data.fatal) restartPlayer();
     });
 
-    if (existing) existing.hls = hls;
-    else players.set(cameraId, { hls });
+    // Restart if video hasn't advanced in 10s while it should be playing
+    let lastTime = -1;
+    let stallCount = 0;
+    const stallWatchdog = setInterval(() => {
+      if (videoEl.readyState >= 2 && !videoEl.paused && !videoEl.ended) {
+        if (videoEl.currentTime === lastTime) {
+          if (++stallCount >= 2) restartPlayer();
+        } else {
+          stallCount = 0;
+        }
+        lastTime = videoEl.currentTime;
+      }
+    }, 5000);
+
+    players.set(cameraId, { hls, stallWatchdog });
   } else if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
     // Safari native HLS
     videoEl.src = src;
@@ -320,9 +341,8 @@ function destroyPlayer(cameraId) {
   const player = players.get(cameraId);
   if (!player) return;
   if (player.pollTimer) clearInterval(player.pollTimer);
-  if (player.hls) {
-    player.hls.destroy();
-  }
+  if (player.stallWatchdog) clearInterval(player.stallWatchdog);
+  if (player.hls) player.hls.destroy();
   players.delete(cameraId);
 }
 
