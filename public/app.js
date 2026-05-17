@@ -315,10 +315,15 @@ function startPlayer(cameraId, videoEl) {
       if (data.fatal) restartPlayer();
     });
 
-    // Restart if video hasn't advanced in 10s while it should be playing
+    // Restart if video hasn't advanced in 10s while it should be playing.
+    // Also resume if the browser paused playback (display sleep / energy saver).
     let lastTime = -1;
     let stallCount = 0;
     const stallWatchdog = setInterval(() => {
+      if (videoEl.paused && videoEl.readyState >= 2 && !videoEl.ended) {
+        videoEl.play().catch(() => {});
+        return;
+      }
       if (videoEl.readyState >= 2 && !videoEl.paused && !videoEl.ended) {
         if (videoEl.currentTime === lastTime) {
           if (++stallCount >= 2) restartPlayer();
@@ -506,3 +511,17 @@ function initConfigWatcher() {
     }
   }, 3000);
 }
+
+// --- Visibility Recovery ---
+// Resume all paused players when the page regains visibility (e.g. display
+// wakes from sleep or the tab is foregrounded after being background-throttled).
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  for (const [cameraId, player] of players) {
+    if (!player.hls) continue;
+    const videoEl = document.getElementById(`video-${cameraId}`);
+    if (videoEl && videoEl.paused && !videoEl.ended) {
+      videoEl.play().catch(() => {});
+    }
+  }
+});
