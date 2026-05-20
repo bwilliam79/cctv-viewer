@@ -315,22 +315,33 @@ function startPlayer(cameraId, videoEl) {
       if (data.fatal) restartPlayer();
     });
 
-    // Restart if video hasn't advanced in 10s while it should be playing.
-    // Also resume if the browser paused playback (display sleep / energy saver).
     let lastTime = -1;
     let stallCount = 0;
     const stallWatchdog = setInterval(() => {
-      if (videoEl.paused && videoEl.readyState >= 2 && !videoEl.ended) {
-        videoEl.play().catch(() => {});
+      if (videoEl.ended) return;
+      if (videoEl.paused) {
+        if (videoEl.readyState >= 2) {
+          // Buffer has data — soft resume (display woke, energy saver released, etc.)
+          videoEl.play().catch(() => {});
+          lastTime = -1;
+          stallCount = 0;
+        } else {
+          // Paused with drained buffer — HLS.js stopped fetching; restart after 15s
+          if (++stallCount >= 3) restartPlayer();
+        }
         return;
       }
-      if (videoEl.readyState >= 2 && !videoEl.paused && !videoEl.ended) {
+      // Playing — verify time is advancing
+      if (videoEl.readyState >= 2) {
         if (videoEl.currentTime === lastTime) {
           if (++stallCount >= 2) restartPlayer();
         } else {
           stallCount = 0;
+          lastTime = videoEl.currentTime;
         }
-        lastTime = videoEl.currentTime;
+      } else {
+        // Playing but buffer drained — count as stall
+        if (++stallCount >= 3) restartPlayer();
       }
     }, 5000);
 
