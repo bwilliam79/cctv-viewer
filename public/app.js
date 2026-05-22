@@ -278,25 +278,43 @@ function pollStream(cam) {
 function startPlayer(cameraId, videoEl) {
   const src = `/streams/${cameraId}/stream.m3u8`;
 
-  function restartPlayer() {
+  function restartPlayer(attempt = 0) {
     const player = players.get(cameraId);
     if (player) {
       if (player.stallWatchdog) clearInterval(player.stallWatchdog);
+      if (player.recoveryTimer) clearTimeout(player.recoveryTimer);
       if (player.hls) player.hls.destroy();
     }
     const statusEl = document.getElementById(`status-${cameraId}`);
-    if (statusEl) {
-      statusEl.textContent = "Stream error - retrying...";
-      statusEl.style.display = "";
-      statusEl.classList.add("error");
-    }
-    setTimeout(() => {
-      if (statusEl) {
-        statusEl.style.display = "none";
-        statusEl.classList.remove("error");
+    if (!statusEl) return; // Camera removed from DOM
+
+    statusEl.textContent = "Stream error - retrying...";
+    statusEl.style.display = "";
+    statusEl.classList.add("error");
+
+    // Exponential backoff: 3s, 6s, 12s, 24s, capped at 30s.
+    // After a source outage (e.g. router reboot), the server-side FFmpeg
+    // process needs time to re-establish the stream before HLS.js can
+    // connect. Checking /status before retrying avoids a rapid-fire error
+    // loop that can silently break the recovery cycle.
+    const delay = Math.min(3000 * Math.pow(2, attempt), 30000);
+    const timer = setTimeout(async () => {
+      try {
+        const resp = await fetch(`/api/cameras/${cameraId}/status`);
+        const status = await resp.json();
+        if (status.ready) {
+          const el = document.getElementById(`status-${cameraId}`);
+          if (el) { el.style.display = "none"; el.classList.remove("error"); }
+          startPlayer(cameraId, videoEl);
+        } else {
+          restartPlayer(Math.min(attempt + 1, 4));
+        }
+      } catch {
+        restartPlayer(Math.min(attempt + 1, 4));
       }
-      startPlayer(cameraId, videoEl);
-    }, 3000);
+    }, delay);
+
+    players.set(cameraId, { recoveryTimer: timer });
   }
 
   if (Hls.isSupported()) {
@@ -358,6 +376,7 @@ function destroyPlayer(cameraId) {
   if (!player) return;
   if (player.pollTimer) clearInterval(player.pollTimer);
   if (player.stallWatchdog) clearInterval(player.stallWatchdog);
+  if (player.recoveryTimer) clearTimeout(player.recoveryTimer);
   if (player.hls) player.hls.destroy();
   players.delete(cameraId);
 }
