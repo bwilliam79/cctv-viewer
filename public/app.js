@@ -28,16 +28,20 @@ function createReconnectUI() {
   reconnectBanner = document.createElement("div");
   reconnectBanner.id = "reconnect-banner";
   reconnectBanner.style.cssText = `
-    position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
-    background: #b45309; color: white; padding: 6px 12px;
-    font-size: 13px; display: none; align-items: center;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    font-family: system-ui, sans-serif;
+    position: fixed; top: 0; left: 0; right: 0; z-index: 99999;
+    background: #b45309; color: white; padding: 8px 12px;
+    font-size: 14px; font-weight: 500; display: none; align-items: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    font-family: system-ui, -apple-system, sans-serif;
+    min-height: 32px;
   `;
   reconnectBanner.innerHTML = `
     <span id="reconnect-text">Backend connection lost — streams will recover automatically</span>
   `;
   document.body.prepend(reconnectBanner);
+
+  // Ensure it's visible even if something is covering the top
+  console.log("[recovery] Reconnect banner created and prepended to body");
 }
 
 function showReconnectBanner(message) {
@@ -51,7 +55,9 @@ function hideReconnectBanner() {
 }
 
 function initBackendHealthMonitor() {
-  // Check backend health every 8 seconds. This is cheap because of /api/ping.
+  // Check backend health more frequently (every 4 seconds) so we reliably catch
+  // even short container restarts. Previously an 8s interval could easily miss
+  // the outage window, which is why you never saw the brown banner.
   setInterval(async () => {
     try {
       const resp = await fetch("/api/ping", { cache: "no-store" });
@@ -81,9 +87,10 @@ function initBackendHealthMonitor() {
         backendHealthy = false;
         backendDownSince = Date.now();
         showReconnectBanner("Backend unavailable — streams will recover automatically when it returns");
+        console.log("[recovery] Backend outage detected (ping failed)");
       }
     }
-  }, 8000);
+  }, 4000);
 }
 
 // --- Version-based auto-reload ---
@@ -121,6 +128,7 @@ function initVersionChecker() {
 function recoverAllPlayers() {
   if (players.size === 0) return;
 
+  console.log("[recovery] recoverAllPlayers() called — showing banner and starting recovery sequence");
   showReconnectBanner("Backend recovered — reconnecting streams...");
 
   // Nuclear option: Give the new ffmpeg processes a solid head start.
