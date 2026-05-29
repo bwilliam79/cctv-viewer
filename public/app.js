@@ -252,6 +252,9 @@ function pollStream(cam) {
   let attempts = 0;
   const maxAttempts = 60; // 60 seconds
 
+  // Progressive backoff during the initial "Connecting..." phase.
+  // Previously fixed 1s interval for up to 60s per camera created unnecessary load.
+  const pollIntervals = [800, 1200, 1800, 2500, 3000];
   const timer = setInterval(async () => {
     attempts++;
     try {
@@ -270,7 +273,7 @@ function pollStream(cam) {
     } catch {
       // Server might be processing, keep trying
     }
-  }, 1000);
+  }, pollIntervals[Math.min(attempts, pollIntervals.length - 1)]);
 
   players.set(cam.id, { pollTimer: timer });
 }
@@ -523,6 +526,9 @@ function initHeaderAutoHide() {
 
 // --- Config Watcher ---
 function initConfigWatcher() {
+  // Reduced from 3s → 45s. The previous aggressive polling caused very high
+  // request volume (visible in production logs). External config edits are rare,
+  // so a 45s check is sufficient for the "reload on external change" feature.
   setInterval(async () => {
     if (editing) return;
     try {
@@ -539,7 +545,7 @@ function initConfigWatcher() {
     } catch {
       // Server unavailable, skip
     }
-  }, 3000);
+  }, 45000);
 }
 
 // --- Visibility Recovery ---
