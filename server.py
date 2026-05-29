@@ -347,7 +347,10 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        if path == "/api/config":
+        if path == "/api/ping":
+            # Very cheap health check for frontend recovery coordinator
+            self._json_response({"ok": True})
+        elif path == "/api/config":
             self._json_response(load_config())
         elif path == "/api/config/download":
             config = load_config()

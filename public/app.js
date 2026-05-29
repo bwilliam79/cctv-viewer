@@ -7,6 +7,133 @@ let editing = false;
 let configHash = "";
 const players = new Map(); // cameraId -> { hls, video, pollTimer }
 
+// ============================================================
+// Backend Recovery Coordinator
+// Makes redeploys / container restarts much less painful.
+// ============================================================
+
+let backendHealthy = true;
+let lastSuccessfulPing = Date.now();
+let backendDownSince = null;
+let reconnectBanner = null;
+
+function createReconnectUI() {
+  if (reconnectBanner) return;
+
+  reconnectBanner = document.createElement("div");
+  reconnectBanner.id = "reconnect-banner";
+  reconnectBanner.style.cssText = `
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+    background: #b45309; color: white; padding: 6px 12px;
+    font-size: 13px; display: none; align-items: center; gap: 12px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  `;
+  reconnectBanner.innerHTML = `
+    <span id="reconnect-text">Backend connection lost — attempting recovery...</span>
+    <button id="btn-reconnect-all" style="
+      background: white; color: #b45309; border: none; padding: 2px 10px;
+      border-radius: 3px; font-size: 12px; cursor: pointer; font-weight: 600;
+    ">Reconnect All Streams</button>
+  `;
+  document.body.prepend(reconnectBanner);
+
+  document.getElementById("btn-reconnect-all").addEventListener("click", () => {
+    recoverAllPlayers(true);
+  });
+}
+
+function showReconnectBanner(message) {
+  if (!reconnectBanner) createReconnectUI();
+  document.getElementById("reconnect-text").textContent = message;
+  reconnectBanner.style.display = "flex";
+}
+
+function hideReconnectBanner() {
+  if (reconnectBanner) reconnectBanner.style.display = "none";
+}
+
+function initBackendHealthMonitor() {
+  // Check backend health every 8 seconds. This is cheap because of /api/ping.
+  setInterval(async () => {
+    try {
+      const resp = await fetch("/api/ping", { cache: "no-store" });
+      const now = Date.now();
+
+      if (resp.ok) {
+        lastSuccessfulPing = now;
+
+        if (!backendHealthy) {
+          // Backend just recovered
+          backendHealthy = true;
+          const downDuration = backendDownSince ? Math.round((now - backendDownSince) / 1000) : 0;
+          backendDownSince = null;
+
+          hideReconnectBanner();
+          console.log(`[recovery] Backend recovered after ~${downDuration}s outage. Triggering stream recovery...`);
+
+          // Give the streams a moment to become ready after restart
+          setTimeout(() => {
+            recoverAllPlayers(false);
+          }, 1500);
+        }
+      }
+    } catch {
+      // Backend is unreachable
+      if (backendHealthy) {
+        backendHealthy = false;
+        backendDownSince = Date.now();
+        showReconnectBanner("Backend unavailable — streams will recover automatically when it returns");
+      }
+    }
+  }, 8000);
+}
+
+function recoverAllPlayers(manual = false) {
+  if (players.size === 0) return;
+
+  const message = manual
+    ? "Manually reconnecting all streams..."
+    : "Backend recovered — reconnecting streams...";
+
+  showReconnectBanner(message);
+
+  let recovered = 0;
+
+  for (const [cameraId, playerData] of players) {
+    const videoEl = document.getElementById(`video-${cameraId}`);
+    if (!videoEl) continue;
+
+    // Force a clean restart for this player
+    try {
+      if (playerData.hls) playerData.hls.destroy();
+      if (playerData.stallWatchdog) clearInterval(playerData.stallWatchdog);
+      if (playerData.recoveryTimer) clearTimeout(playerData.recoveryTimer);
+
+      // Re-trigger the normal startup flow (it will poll status first)
+      const cam = cameras.find(c => c.id === cameraId);
+      if (cam) {
+        // Clear the old entry and restart fresh
+        players.delete(cameraId);
+        pollStream(cam); // This will show "Connecting..." and wait for ready
+        recovered++;
+      }
+    } catch (e) {
+      console.warn("Error during recovery for", cameraId, e);
+    }
+  }
+
+  console.log(`[recovery] Triggered recovery for ${recovered} stream(s)`);
+
+  // Hide banner after a reasonable time if we're in auto-recovery
+  if (!manual) {
+    setTimeout(() => {
+      if (reconnectBanner && reconnectBanner.style.display !== "none") {
+        hideReconnectBanner();
+      }
+    }, 25000);
+  }
+}
+
 // --- Init ---
 document.addEventListener("DOMContentLoaded", async () => {
   grid = GridStack.init({
@@ -46,6 +173,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   initHeaderAutoHide();
   initConfigWatcher();
+  createReconnectUI();
+  initBackendHealthMonitor();
 
 });
 
@@ -333,7 +462,16 @@ function startPlayer(cameraId, videoEl) {
       videoEl.play().catch(() => {});
     });
     hls.on(Hls.Events.ERROR, (_event, data) => {
-      if (data.fatal) restartPlayer();
+      // Treat fatal errors + common network death cases as reasons to recover.
+      // This helps a lot when the entire backend container is restarted.
+      const isFatal = data.fatal;
+      const isNetworkDeath = data.type === Hls.ErrorTypes.NETWORK_ERROR ||
+                             data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
+                             data.details === Hls.ErrorDetails.LEVEL_LOAD_ERROR;
+
+      if (isFatal || isNetworkDeath) {
+        restartPlayer();
+      }
     });
 
     let lastTime = -1;
