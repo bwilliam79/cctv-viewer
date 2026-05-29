@@ -350,6 +350,13 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/ping":
             # Very cheap health check for frontend recovery coordinator
             self._json_response({"ok": True})
+        elif path == "/api/version":
+            # Used by the frontend to detect when a new deployment has happened
+            # so it can auto-reload without needing a manual refresh (important
+            # for headless kiosk setups).
+            self._json_response({
+                "version": os.environ.get("DEPLOY_VERSION", str(int(time.time())))
+            })
         elif path == "/api/config":
             self._json_response(load_config())
         elif path == "/api/config/download":

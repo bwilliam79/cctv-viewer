@@ -17,6 +17,9 @@ let lastSuccessfulPing = Date.now();
 let backendDownSince = null;
 let reconnectBanner = null;
 
+let currentAppVersion = null;
+let versionCheckInterval = null;
+
 function createReconnectUI() {
   if (reconnectBanner) return;
 
@@ -81,6 +84,38 @@ function initBackendHealthMonitor() {
       }
     }
   }, 8000);
+}
+
+// --- Version-based auto-reload ---
+// This lets the kiosk browser pick up new deployments without a manual
+// hard refresh (which is impossible on a truly headless display).
+function initVersionChecker() {
+  // Check every 30 seconds. Very cheap endpoint.
+  versionCheckInterval = setInterval(async () => {
+    try {
+      const resp = await fetch("/api/version", { cache: "no-store" });
+      if (!resp.ok) return;
+
+      const data = await resp.json();
+      const newVersion = data.version;
+
+      if (currentAppVersion === null) {
+        // First load
+        currentAppVersion = newVersion;
+        return;
+      }
+
+      if (newVersion !== currentAppVersion) {
+        console.log(`[version] New deployment detected (${currentAppVersion} → ${newVersion}). Reloading...`);
+        // Small delay so any recovery banners can be seen if desired
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      }
+    } catch {
+      // Ignore transient errors
+    }
+  }, 30000);
 }
 
 function recoverAllPlayers() {
@@ -218,6 +253,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   initConfigWatcher();
   createReconnectUI();
   initBackendHealthMonitor();
+  initVersionChecker();
+
+  // Fetch initial version so the checker has a baseline immediately
+  fetch("/api/version", { cache: "no-store" })
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (data && data.version) {
+        currentAppVersion = data.version;
+      }
+    })
+    .catch(() => {});
 
 });
 
