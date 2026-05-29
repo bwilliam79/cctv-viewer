@@ -55,9 +55,10 @@ function hideReconnectBanner() {
 }
 
 function initBackendHealthMonitor() {
-  // Check backend health more frequently (every 4 seconds) so we reliably catch
-  // even short container restarts. Previously an 8s interval could easily miss
-  // the outage window, which is why you never saw the brown banner.
+  // Check backend health more frequently (every 4 seconds).
+  // We now also periodically check the actual per-camera status endpoints.
+  // This catches cases where the backend responds to /ping but the streams
+  // themselves are broken — something we've seen cause long black screens.
   setInterval(async () => {
     try {
       const resp = await fetch("/api/ping", { cache: "no-store" });
@@ -66,23 +67,31 @@ function initBackendHealthMonitor() {
       if (resp.ok) {
         lastSuccessfulPing = now;
 
-        if (!backendHealthy) {
-          // Backend just recovered
+        // Also check if any cameras are reporting not ready for a while.
+        // If so, treat it as a stream-level outage even if /ping succeeds.
+        const cameraStatuses = await Promise.all(
+          Array.from(players.keys()).map(id =>
+            fetch(`/api/cameras/${id}/status`, { cache: "no-store" })
+              .then(r => r.ok ? r.json() : { ready: false })
+              .catch(() => ({ ready: false }))
+          )
+        );
+        const anyCameraNotReady = cameraStatuses.some(s => !s.ready);
+
+        if (!backendHealthy || anyCameraNotReady) {
           backendHealthy = true;
           const downDuration = backendDownSince ? Math.round((now - backendDownSince) / 1000) : 0;
           backendDownSince = null;
 
           hideReconnectBanner();
-          console.log(`[recovery] Backend recovered after ~${downDuration}s outage. Triggering stream recovery...`);
+          console.log(`[recovery] Backend/streams recovered after ~${downDuration}s. Triggering recovery...`);
 
-          // Give the streams a moment to become ready after restart
           setTimeout(() => {
             recoverAllPlayers();
           }, 1500);
         }
       }
     } catch {
-      // Backend is unreachable
       if (backendHealthy) {
         backendHealthy = false;
         backendDownSince = Date.now();
@@ -104,31 +113,31 @@ function initStuckRecoveryChecker() {
     const errorStatuses = document.querySelectorAll('.status-msg.error');
     const totalCameras = document.querySelectorAll('.status-msg').length;
 
-    if (totalCameras > 0 && errorStatuses.length >= Math.ceil(totalCameras * 0.75)) {
+    if (totalCameras > 0 && errorStatuses.length >= Math.ceil(totalCameras * 0.5)) {
+      // Lowered threshold to 50% so we react faster with only 4 cameras.
       if (!stuckSince) {
         stuckSince = Date.now();
-        console.log("[recovery] Many cameras stuck in error state — forcing recovery");
+        console.log("[recovery] Cameras stuck in error state — forcing recovery");
         recoverAllPlayers();
       } else {
         const stuckDuration = Math.round((Date.now() - stuckSince) / 1000);
 
-        // If we've been stuck for more than ~90 seconds even after recovery attempts,
-        // force a full page reload. This is the most reliable recovery for a
-        // long-running headless kiosk tab.
-        if (stuckDuration > 90) {
+        // Escalation: After 60s of being stuck, force a full page reload.
+        // This is more aggressive than the previous 90s, but still conservative
+        // enough to give the proper recovery logic a chance first.
+        if (stuckDuration > 60) {
           console.log(`[recovery] Streams still stuck after ${stuckDuration}s — forcing page reload`);
           showReconnectBanner("Recovery failed — reloading page...");
           setTimeout(() => {
             window.location.reload();
           }, 3000);
-        } else if (stuckDuration > 40) {
-          // Try one more aggressive recovery
+        } else if (stuckDuration > 30) {
+          // Retry recovery after 30s
           console.log(`[recovery] Still stuck after ${stuckDuration}s — retrying recovery`);
           recoverAllPlayers();
         }
       }
     } else {
-      // Recovered or improved
       stuckSince = null;
     }
   }, 25000);
