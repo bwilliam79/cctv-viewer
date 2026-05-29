@@ -93,6 +93,22 @@ function initBackendHealthMonitor() {
   }, 4000);
 }
 
+// Fallback: Periodically check if the UI looks stuck in error state.
+// If many cameras have been showing "retrying" or error for a while,
+// force the good recovery path. This helps when the /api/ping detection
+// misses a short outage.
+function initStuckRecoveryChecker() {
+  setInterval(() => {
+    const errorStatuses = document.querySelectorAll('.status-msg.error');
+    const totalCameras = document.querySelectorAll('.status-msg').length;
+
+    if (totalCameras > 0 && errorStatuses.length >= Math.ceil(totalCameras * 0.75)) {
+      console.log("[recovery] Many cameras stuck in error state — forcing recovery");
+      recoverAllPlayers();
+    }
+  }, 25000);
+}
+
 // --- Version-based auto-reload ---
 // This lets the kiosk browser pick up new deployments without a manual
 // hard refresh (which is impossible on a truly headless display).
@@ -284,6 +300,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   createReconnectUI();
   initBackendHealthMonitor();
   initVersionChecker();
+  initStuckRecoveryChecker();
 
   // Fetch initial version so the checker has a baseline immediately
   fetch("/api/version", { cache: "no-store" })
