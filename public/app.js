@@ -123,89 +123,111 @@ function recoverAllPlayers() {
 
   showReconnectBanner("Backend recovered — reconnecting streams...");
 
-  let recovered = 0;
+  // Nuclear option: Give the new ffmpeg processes a solid head start.
+  // Many "black screen after retrying" cases happen because we try to
+  // attach HLS.js too early, before the playlist + segments are stable.
+  const RECOVERY_DELAY_MS = 8000; // 8 seconds of grace after backend reports ready
 
-  for (const [cameraId, playerData] of players) {
-    const videoEl = document.getElementById(`video-${cameraId}`);
-    const container = document.getElementById(`vc-${cameraId}`);
-    const statusEl = document.getElementById(`status-${cameraId}`);
+  console.log(`[recovery] Backend recovered. Waiting ${RECOVERY_DELAY_MS}ms before attempting to reconnect streams...`);
 
-    if (!videoEl || !container) continue;
-
-    try {
-      // Aggressively clean up everything for this camera
-      if (playerData.hls) playerData.hls.destroy();
-      if (playerData.stallWatchdog) clearInterval(playerData.stallWatchdog);
-      if (playerData.recoveryTimer) clearTimeout(playerData.recoveryTimer);
-      if (playerData.pollTimer) clearInterval(playerData.pollTimer);
-
-      // Fully reset the video element by replacing it.
-      // This is much more reliable after a full backend outage than
-      // trying to reuse a video element that HLS.js has errored on.
-      const newVideo = document.createElement('video');
-      newVideo.id = `video-${cameraId}`;
-      newVideo.muted = true;
-      newVideo.autoplay = true;
-      newVideo.playsInline = true;
-
-      // Replace the old video in the DOM
-      videoEl.parentNode.replaceChild(newVideo, videoEl);
-
-      // Reset status message
-      if (statusEl) {
-        statusEl.textContent = "Connecting...";
-        statusEl.classList.remove("error");
-        statusEl.style.display = "";
-      }
-
-      const cam = cameras.find(c => c.id === cameraId);
-      if (cam) {
-        players.delete(cameraId);
-        // Start fresh polling against the brand new video element
-        pollStreamWithVideo(cam, newVideo);
-        recovered++;
-      }
-    } catch (e) {
-      console.warn("Error during recovery for", cameraId, e);
-    }
-  }
-
-  console.log(`[recovery] Triggered recovery for ${recovered} stream(s)`);
-
-  // Auto-hide the banner after recovery has had time to work
   setTimeout(() => {
-    if (reconnectBanner && reconnectBanner.style.display !== "none") {
-      hideReconnectBanner();
+    let recovered = 0;
+
+    for (const [cameraId, playerData] of players) {
+      const videoEl = document.getElementById(`video-${cameraId}`);
+      const container = document.getElementById(`vc-${cameraId}`);
+      const statusEl = document.getElementById(`status-${cameraId}`);
+
+      if (!videoEl || !container) continue;
+
+      try {
+        // Aggressively clean up everything for this camera
+        if (playerData.hls) playerData.hls.destroy();
+        if (playerData.stallWatchdog) clearInterval(playerData.stallWatchdog);
+        if (playerData.recoveryTimer) clearTimeout(playerData.recoveryTimer);
+        if (playerData.pollTimer) clearInterval(playerData.pollTimer);
+
+        // Fully reset the video element by replacing it.
+        const newVideo = document.createElement('video');
+        newVideo.id = `video-${cameraId}`;
+        newVideo.muted = true;
+        newVideo.autoplay = true;
+        newVideo.playsInline = true;
+
+        videoEl.parentNode.replaceChild(newVideo, videoEl);
+
+        if (statusEl) {
+          statusEl.textContent = "Connecting...";
+          statusEl.classList.remove("error");
+          statusEl.style.display = "";
+        }
+
+        const cam = cameras.find(c => c.id === cameraId);
+        if (cam) {
+          players.delete(cameraId);
+          // Use a more patient polling function after a full backend outage
+          pollStreamAfterRecovery(cam, newVideo);
+          recovered++;
+        }
+      } catch (e) {
+        console.warn("Error during recovery for", cameraId, e);
+      }
     }
-  }, 32000);
+
+    console.log(`[recovery] Triggered recovery for ${recovered} stream(s) after stabilization delay`);
+
+    setTimeout(() => {
+      if (reconnectBanner && reconnectBanner.style.display !== "none") {
+        hideReconnectBanner();
+      }
+    }, 25000);
+  }, RECOVERY_DELAY_MS);
 }
 
-// Wrapper so pollStream can target a specific (possibly newly created) video element
-function pollStreamWithVideo(cam, videoEl) {
+// More patient version used after a full backend outage.
+// Requires 3 consecutive "ready" responses before starting the player.
+// This dramatically reduces the "attach too early → immediate error → black screen" problem.
+function pollStreamAfterRecovery(cam, videoEl) {
   const statusEl = document.getElementById(`status-${cam.id}`);
   if (!statusEl || !videoEl) return;
 
   let attempts = 0;
-  const maxAttempts = 60;
+  let consecutiveReady = 0;
+  const REQUIRED_CONSECUTIVE_READY = 3;
+  const maxAttempts = 90; // allow more time
 
-  const pollIntervals = [800, 1200, 1800, 2500, 3000];
+  const pollIntervals = [1000, 1500, 2000, 2500];
+
   const timer = setInterval(async () => {
     attempts++;
+
     try {
       const resp = await fetch(`/api/cameras/${cam.id}/status`);
       const status = await resp.json();
 
       if (status.ready) {
+        consecutiveReady++;
+      } else {
+        consecutiveReady = 0;
+      }
+
+      if (consecutiveReady >= REQUIRED_CONSECUTIVE_READY) {
         clearInterval(timer);
         statusEl.style.display = "none";
+        console.log(`[recovery] ${cam.id} stable for ${REQUIRED_CONSECUTIVE_READY} checks — starting player`);
         startPlayer(cam.id, videoEl);
       } else if (attempts >= maxAttempts) {
         clearInterval(timer);
         statusEl.textContent = "Stream timeout - check URL";
         statusEl.classList.add("error");
+      } else {
+        // Still waiting for stability
+        if (statusEl) {
+          statusEl.textContent = `Connecting... (${consecutiveReady}/${REQUIRED_CONSECUTIVE_READY})`;
+        }
       }
     } catch {
-      // keep trying
+      consecutiveReady = 0;
     }
   }, pollIntervals[Math.min(attempts, pollIntervals.length - 1)]);
 
