@@ -92,17 +92,42 @@ function recoverAllPlayers() {
 
   for (const [cameraId, playerData] of players) {
     const videoEl = document.getElementById(`video-${cameraId}`);
-    if (!videoEl) continue;
+    const container = document.getElementById(`vc-${cameraId}`);
+    const statusEl = document.getElementById(`status-${cameraId}`);
+
+    if (!videoEl || !container) continue;
 
     try {
+      // Aggressively clean up everything for this camera
       if (playerData.hls) playerData.hls.destroy();
       if (playerData.stallWatchdog) clearInterval(playerData.stallWatchdog);
       if (playerData.recoveryTimer) clearTimeout(playerData.recoveryTimer);
+      if (playerData.pollTimer) clearInterval(playerData.pollTimer);
+
+      // Fully reset the video element by replacing it.
+      // This is much more reliable after a full backend outage than
+      // trying to reuse a video element that HLS.js has errored on.
+      const newVideo = document.createElement('video');
+      newVideo.id = `video-${cameraId}`;
+      newVideo.muted = true;
+      newVideo.autoplay = true;
+      newVideo.playsInline = true;
+
+      // Replace the old video in the DOM
+      videoEl.parentNode.replaceChild(newVideo, videoEl);
+
+      // Reset status message
+      if (statusEl) {
+        statusEl.textContent = "Connecting...";
+        statusEl.classList.remove("error");
+        statusEl.style.display = "";
+      }
 
       const cam = cameras.find(c => c.id === cameraId);
       if (cam) {
         players.delete(cameraId);
-        pollStream(cam);
+        // Start fresh polling against the brand new video element
+        pollStreamWithVideo(cam, newVideo);
         recovered++;
       }
     } catch (e) {
@@ -117,7 +142,39 @@ function recoverAllPlayers() {
     if (reconnectBanner && reconnectBanner.style.display !== "none") {
       hideReconnectBanner();
     }
-  }, 28000);
+  }, 32000);
+}
+
+// Wrapper so pollStream can target a specific (possibly newly created) video element
+function pollStreamWithVideo(cam, videoEl) {
+  const statusEl = document.getElementById(`status-${cam.id}`);
+  if (!statusEl || !videoEl) return;
+
+  let attempts = 0;
+  const maxAttempts = 60;
+
+  const pollIntervals = [800, 1200, 1800, 2500, 3000];
+  const timer = setInterval(async () => {
+    attempts++;
+    try {
+      const resp = await fetch(`/api/cameras/${cam.id}/status`);
+      const status = await resp.json();
+
+      if (status.ready) {
+        clearInterval(timer);
+        statusEl.style.display = "none";
+        startPlayer(cam.id, videoEl);
+      } else if (attempts >= maxAttempts) {
+        clearInterval(timer);
+        statusEl.textContent = "Stream timeout - check URL";
+        statusEl.classList.add("error");
+      }
+    } catch {
+      // keep trying
+    }
+  }, pollIntervals[Math.min(attempts, pollIntervals.length - 1)]);
+
+  players.set(cam.id, { pollTimer: timer });
 }
 
 // --- Init ---
