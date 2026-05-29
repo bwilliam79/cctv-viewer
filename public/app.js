@@ -98,13 +98,38 @@ function initBackendHealthMonitor() {
 // force the good recovery path. This helps when the /api/ping detection
 // misses a short outage.
 function initStuckRecoveryChecker() {
+  let stuckSince = null;
+
   setInterval(() => {
     const errorStatuses = document.querySelectorAll('.status-msg.error');
     const totalCameras = document.querySelectorAll('.status-msg').length;
 
     if (totalCameras > 0 && errorStatuses.length >= Math.ceil(totalCameras * 0.75)) {
-      console.log("[recovery] Many cameras stuck in error state — forcing recovery");
-      recoverAllPlayers();
+      if (!stuckSince) {
+        stuckSince = Date.now();
+        console.log("[recovery] Many cameras stuck in error state — forcing recovery");
+        recoverAllPlayers();
+      } else {
+        const stuckDuration = Math.round((Date.now() - stuckSince) / 1000);
+
+        // If we've been stuck for more than ~90 seconds even after recovery attempts,
+        // force a full page reload. This is the most reliable recovery for a
+        // long-running headless kiosk tab.
+        if (stuckDuration > 90) {
+          console.log(`[recovery] Streams still stuck after ${stuckDuration}s — forcing page reload`);
+          showReconnectBanner("Recovery failed — reloading page...");
+          setTimeout(() => {
+            window.location.reload();
+          }, 3000);
+        } else if (stuckDuration > 40) {
+          // Try one more aggressive recovery
+          console.log(`[recovery] Still stuck after ${stuckDuration}s — retrying recovery`);
+          recoverAllPlayers();
+        }
+      }
+    } else {
+      // Recovered or improved
+      stuckSince = null;
     }
   }, 25000);
 }
