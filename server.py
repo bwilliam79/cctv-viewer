@@ -366,7 +366,15 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
             with process_lock:
                 running = cam_id in ffmpeg_processes
             m3u8 = STREAMS_DIR / cam_id / "stream.m3u8"
-            self._json_response({"running": running, "ready": m3u8.exists()})
+            # hls_time=2 means FFmpeg rewrites the m3u8 every ~2s. If the file
+            # hasn't been touched in 10s, FFmpeg is not actively writing —
+            # treat as not ready so the client keeps backing off instead of
+            # hammering a stale playlist and resetting its backoff to 0.
+            try:
+                m3u8_fresh = m3u8.exists() and (time.time() - m3u8.stat().st_mtime < 10)
+            except OSError:
+                m3u8_fresh = False
+            self._json_response({"running": running, "ready": m3u8_fresh})
         else:
             self.send_error(404)
 
