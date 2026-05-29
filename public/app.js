@@ -20,26 +20,21 @@ let reconnectBanner = null;
 function createReconnectUI() {
   if (reconnectBanner) return;
 
+  // Purely informational banner — no button because media-server is headless
+  // (no keyboard/mouse on the display running the viewer).
   reconnectBanner = document.createElement("div");
   reconnectBanner.id = "reconnect-banner";
   reconnectBanner.style.cssText = `
     position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
     background: #b45309; color: white; padding: 6px 12px;
-    font-size: 13px; display: none; align-items: center; gap: 12px;
+    font-size: 13px; display: none; align-items: center;
     box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    font-family: system-ui, sans-serif;
   `;
   reconnectBanner.innerHTML = `
-    <span id="reconnect-text">Backend connection lost — attempting recovery...</span>
-    <button id="btn-reconnect-all" style="
-      background: white; color: #b45309; border: none; padding: 2px 10px;
-      border-radius: 3px; font-size: 12px; cursor: pointer; font-weight: 600;
-    ">Reconnect All Streams</button>
+    <span id="reconnect-text">Backend connection lost — streams will recover automatically</span>
   `;
   document.body.prepend(reconnectBanner);
-
-  document.getElementById("btn-reconnect-all").addEventListener("click", () => {
-    recoverAllPlayers(true);
-  });
 }
 
 function showReconnectBanner(message) {
@@ -73,7 +68,7 @@ function initBackendHealthMonitor() {
 
           // Give the streams a moment to become ready after restart
           setTimeout(() => {
-            recoverAllPlayers(false);
+            recoverAllPlayers();
           }, 1500);
         }
       }
@@ -88,14 +83,10 @@ function initBackendHealthMonitor() {
   }, 8000);
 }
 
-function recoverAllPlayers(manual = false) {
+function recoverAllPlayers() {
   if (players.size === 0) return;
 
-  const message = manual
-    ? "Manually reconnecting all streams..."
-    : "Backend recovered — reconnecting streams...";
-
-  showReconnectBanner(message);
+  showReconnectBanner("Backend recovered — reconnecting streams...");
 
   let recovered = 0;
 
@@ -103,18 +94,15 @@ function recoverAllPlayers(manual = false) {
     const videoEl = document.getElementById(`video-${cameraId}`);
     if (!videoEl) continue;
 
-    // Force a clean restart for this player
     try {
       if (playerData.hls) playerData.hls.destroy();
       if (playerData.stallWatchdog) clearInterval(playerData.stallWatchdog);
       if (playerData.recoveryTimer) clearTimeout(playerData.recoveryTimer);
 
-      // Re-trigger the normal startup flow (it will poll status first)
       const cam = cameras.find(c => c.id === cameraId);
       if (cam) {
-        // Clear the old entry and restart fresh
         players.delete(cameraId);
-        pollStream(cam); // This will show "Connecting..." and wait for ready
+        pollStream(cam);
         recovered++;
       }
     } catch (e) {
@@ -124,14 +112,12 @@ function recoverAllPlayers(manual = false) {
 
   console.log(`[recovery] Triggered recovery for ${recovered} stream(s)`);
 
-  // Hide banner after a reasonable time if we're in auto-recovery
-  if (!manual) {
-    setTimeout(() => {
-      if (reconnectBanner && reconnectBanner.style.display !== "none") {
-        hideReconnectBanner();
-      }
-    }, 25000);
-  }
+  // Auto-hide the banner after recovery has had time to work
+  setTimeout(() => {
+    if (reconnectBanner && reconnectBanner.style.display !== "none") {
+      hideReconnectBanner();
+    }
+  }, 28000);
 }
 
 // --- Init ---
