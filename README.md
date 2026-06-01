@@ -64,7 +64,40 @@ If you see `software re-encoding` instead, the GPU may not be accessible. Ensure
 
 ## Auto-Refresh
 
-The frontend polls the server config every 3 seconds. When the configuration changes externally (e.g. cameras added/removed or layout updated via the API from another machine), the kiosk display reloads automatically — no manual refresh needed.
+The frontend polls the server config every 45 seconds. When the configuration changes externally (e.g. cameras added/removed or layout updated via the API from another machine), the kiosk display reloads automatically — no manual refresh needed.
+
+The frontend also checks a `/api/version` endpoint every 30 seconds. When the server restarts (e.g. after a redeploy), the version changes and the kiosk reloads to pick up the latest build — useful for headless displays with no keyboard.
+
+## Kiosk Management Scripts
+
+The `scripts/` directory contains utilities for managing a headless kiosk Chrome session running the viewer. Both require Chrome to be started with `--remote-debugging-port=9222`.
+
+### Suggested Chrome launch flags
+
+```
+google-chrome --kiosk --no-first-run --disable-session-crashed-bubble \
+  --noerrdialogs --disable-infobars --disable-extensions \
+  --remote-debugging-port=9222 \
+  --user-data-dir=/home/<user>/.config/chrome-kiosk \
+  --ozone-platform=wayland \
+  http://localhost:8090
+```
+
+### reload-chrome.py
+
+Triggers a page reload in Chrome without needing a keyboard, mouse, or server reboot:
+
+```bash
+python3 scripts/reload-chrome.py
+```
+
+### monitor-chrome.py
+
+Streams Chrome's console logs, HTTP errors (with URLs), and page navigation events to your terminal. Useful for diagnosing feed restarts or unexpected reloads:
+
+```bash
+python3 scripts/monitor-chrome.py [seconds]   # default: 120
+```
 
 ## REST API
 
