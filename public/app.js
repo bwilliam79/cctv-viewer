@@ -109,18 +109,10 @@ function initStuckRecoveryChecker() {
 
       const stuckDuration = Math.round((Date.now() - stuckSince) / 1000);
 
-      // Very aggressive escalation for this environment:
-      // - 20s  → force recoverAllPlayers()
-      // - 45s  → force full page reload (this is the reliable hammer when the tab is dying)
-      if (stuckDuration > 45) {
-        console.log(`[recovery] Streams stuck for ${stuckDuration}s — forcing full page reload`);
-        // We don't even bother with the banner here because the tab may be too far gone.
-        setTimeout(() => {
-          window.location.reload();
-        }, 1000);
-      } else if (stuckDuration > 20) {
+      if (stuckDuration > 60) {
         console.log(`[recovery] Streams stuck for ${stuckDuration}s — forcing recovery`);
         recoverAllPlayers();
+        stuckSince = null;
       }
     } else {
       stuckSince = null;
@@ -617,14 +609,7 @@ function startPlayer(cameraId, videoEl) {
       videoEl.play().catch(() => {});
     });
     hls.on(Hls.Events.ERROR, (_event, data) => {
-      // Treat fatal errors + common network death cases as reasons to recover.
-      // This helps a lot when the entire backend container is restarted.
-      const isFatal = data.fatal;
-      const isNetworkDeath = data.type === Hls.ErrorTypes.NETWORK_ERROR ||
-                             data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
-                             data.details === Hls.ErrorDetails.LEVEL_LOAD_ERROR;
-
-      if (isFatal || isNetworkDeath) {
+      if (data.fatal) {
         restartPlayer();
       }
     });
