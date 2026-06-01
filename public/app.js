@@ -55,10 +55,6 @@ function hideReconnectBanner() {
 }
 
 function initBackendHealthMonitor() {
-  // Check backend health more frequently (every 4 seconds).
-  // We now also periodically check the actual per-camera status endpoints.
-  // This catches cases where the backend responds to /ping but the streams
-  // themselves are broken — something we've seen cause long black screens.
   setInterval(async () => {
     try {
       const resp = await fetch("/api/ping", { cache: "no-store" });
@@ -67,24 +63,13 @@ function initBackendHealthMonitor() {
       if (resp.ok) {
         lastSuccessfulPing = now;
 
-        // Also check if any cameras are reporting not ready for a while.
-        // If so, treat it as a stream-level outage even if /ping succeeds.
-        const cameraStatuses = await Promise.all(
-          Array.from(players.keys()).map(id =>
-            fetch(`/api/cameras/${id}/status`, { cache: "no-store" })
-              .then(r => r.ok ? r.json() : { ready: false })
-              .catch(() => ({ ready: false }))
-          )
-        );
-        const anyCameraNotReady = cameraStatuses.some(s => !s.ready);
-
-        if (!backendHealthy || anyCameraNotReady) {
+        if (!backendHealthy) {
           backendHealthy = true;
           const downDuration = backendDownSince ? Math.round((now - backendDownSince) / 1000) : 0;
           backendDownSince = null;
 
           hideReconnectBanner();
-          console.log(`[recovery] Backend/streams recovered after ~${downDuration}s. Triggering recovery...`);
+          console.log(`[recovery] Backend recovered after ~${downDuration}s. Triggering recovery...`);
 
           setTimeout(() => {
             recoverAllPlayers();
@@ -109,38 +94,38 @@ function initBackendHealthMonitor() {
 function initStuckRecoveryChecker() {
   let stuckSince = null;
 
+  // Check much more frequently. In a headless kiosk, we want to detect
+  // and recover from bad states as fast as possible.
   setInterval(() => {
     const errorStatuses = document.querySelectorAll('.status-msg.error');
     const totalCameras = document.querySelectorAll('.status-msg').length;
 
-    if (totalCameras > 0 && errorStatuses.length >= Math.ceil(totalCameras * 0.5)) {
-      // Lowered threshold to 50% so we react faster with only 4 cameras.
+    const hasErrors = totalCameras > 0 && errorStatuses.length >= 1;
+
+    if (hasErrors) {
       if (!stuckSince) {
         stuckSince = Date.now();
-        console.log("[recovery] Cameras stuck in error state — forcing recovery");
-        recoverAllPlayers();
-      } else {
-        const stuckDuration = Math.round((Date.now() - stuckSince) / 1000);
+      }
 
-        // Escalation: After 60s of being stuck, force a full page reload.
-        // This is more aggressive than the previous 90s, but still conservative
-        // enough to give the proper recovery logic a chance first.
-        if (stuckDuration > 60) {
-          console.log(`[recovery] Streams still stuck after ${stuckDuration}s — forcing page reload`);
-          showReconnectBanner("Recovery failed — reloading page...");
-          setTimeout(() => {
-            window.location.reload();
-          }, 3000);
-        } else if (stuckDuration > 30) {
-          // Retry recovery after 30s
-          console.log(`[recovery] Still stuck after ${stuckDuration}s — retrying recovery`);
-          recoverAllPlayers();
-        }
+      const stuckDuration = Math.round((Date.now() - stuckSince) / 1000);
+
+      // Very aggressive escalation for this environment:
+      // - 20s  → force recoverAllPlayers()
+      // - 45s  → force full page reload (this is the reliable hammer when the tab is dying)
+      if (stuckDuration > 45) {
+        console.log(`[recovery] Streams stuck for ${stuckDuration}s — forcing full page reload`);
+        // We don't even bother with the banner here because the tab may be too far gone.
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } else if (stuckDuration > 20) {
+        console.log(`[recovery] Streams stuck for ${stuckDuration}s — forcing recovery`);
+        recoverAllPlayers();
       }
     } else {
       stuckSince = null;
     }
-  }, 25000);
+  }, 10000); // Check every 10 seconds
 }
 
 // --- Version-based auto-reload ---
