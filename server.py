@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 # match this shape is either a bug or a traversal attempt — reject at the edge.
 _CAM_ID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
+_SERVER_VERSION = os.environ.get("DEPLOY_VERSION", str(int(time.time())))
+
 
 def is_valid_cam_id(cam_id: str) -> bool:
     return bool(cam_id and _CAM_ID_RE.match(cam_id))
@@ -355,7 +357,7 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
             # so it can auto-reload without needing a manual refresh (important
             # for headless kiosk setups).
             self._json_response({
-                "version": os.environ.get("DEPLOY_VERSION", str(int(time.time())))
+                "version": _SERVER_VERSION
             })
         elif path == "/api/config":
             self._json_response(load_config())
