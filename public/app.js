@@ -817,6 +817,7 @@ function initConfigWatcher() {
     if (editing) return;
     try {
       const resp = await fetch("/api/config");
+      if (!resp.ok) return;
       const text = await resp.text();
       if (!configHash) {
         configHash = text;
