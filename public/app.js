@@ -176,7 +176,7 @@ function recoverAllPlayers() {
   setTimeout(() => {
     let recovered = 0;
 
-    for (const [cameraId, playerData] of players) {
+    for (const [cameraId, playerData] of [...players]) {
       const videoEl = document.getElementById(`video-${cameraId}`);
       const container = document.getElementById(`vc-${cameraId}`);
       const statusEl = document.getElementById(`status-${cameraId}`);
