@@ -55,12 +55,15 @@ function hideReconnectBanner() {
 }
 
 function initBackendHealthMonitor() {
+  let consecutiveFailures = 0;
+
   setInterval(async () => {
     try {
       const resp = await fetch("/api/ping", { cache: "no-store" });
       const now = Date.now();
 
       if (resp.ok) {
+        consecutiveFailures = 0;
         lastSuccessfulPing = now;
 
         if (!backendHealthy) {
@@ -77,11 +80,12 @@ function initBackendHealthMonitor() {
         }
       }
     } catch {
-      if (backendHealthy) {
+      consecutiveFailures++;
+      if (backendHealthy && consecutiveFailures >= 2) {
         backendHealthy = false;
         backendDownSince = Date.now();
         showReconnectBanner("Backend unavailable — streams will recover automatically when it returns");
-        console.log("[recovery] Backend outage detected (ping failed)");
+        console.log(`[recovery] Backend outage detected after ${consecutiveFailures} consecutive ping failures`);
       }
     }
   }, 4000);
@@ -557,7 +561,8 @@ function pollStream(cam) {
 function startPlayer(cameraId, videoEl) {
   const src = `/streams/${cameraId}/stream.m3u8`;
 
-  function restartPlayer(attempt = 0) {
+  function restartPlayer(attempt = 0, reason = "unknown") {
+    console.log(`[player] ${cameraId} restart attempt=${attempt} reason=${reason}`);
     const player = players.get(cameraId);
     if (player) {
       if (player.stallWatchdog) clearInterval(player.stallWatchdog);
@@ -610,7 +615,8 @@ function startPlayer(cameraId, videoEl) {
     });
     hls.on(Hls.Events.ERROR, (_event, data) => {
       if (data.fatal) {
-        restartPlayer();
+        console.log(`[player] ${cameraId} HLS fatal error type=${data.type} details=${data.details}`);
+        restartPlayer(0, `hls-fatal:${data.details}`);
       }
     });
 
@@ -626,21 +632,21 @@ function startPlayer(cameraId, videoEl) {
           stallCount = 0;
         } else {
           // Paused with drained buffer — HLS.js stopped fetching; restart after 15s
-          if (++stallCount >= 3) restartPlayer();
+          if (++stallCount >= 3) restartPlayer(0, "paused-buffer-drained");
         }
         return;
       }
       // Playing — verify time is advancing
       if (videoEl.readyState >= 2) {
         if (videoEl.currentTime === lastTime) {
-          if (++stallCount >= 2) restartPlayer();
+          if (++stallCount >= 2) restartPlayer(0, "time-frozen");
         } else {
           stallCount = 0;
           lastTime = videoEl.currentTime;
         }
       } else {
         // Playing but buffer drained — count as stall
-        if (++stallCount >= 3) restartPlayer();
+        if (++stallCount >= 3) restartPlayer(0, "playing-buffer-drained");
       }
     }, 5000);
 
