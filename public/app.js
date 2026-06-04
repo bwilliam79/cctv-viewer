@@ -603,10 +603,11 @@ function startPlayer(cameraId, videoEl) {
 
   if (Hls.isSupported()) {
     const hls = new Hls({
-      liveSyncDurationCount: 1,
-      liveMaxLatencyDurationCount: 3,
+      liveSyncDurationCount: 3,
+      liveMaxLatencyDurationCount: 8,
+      maxBufferLength: 20,
       enableWorker: true,
-      lowLatencyMode: true,
+      lowLatencyMode: false,
     });
     hls.loadSource(src);
     hls.attachMedia(videoEl);
