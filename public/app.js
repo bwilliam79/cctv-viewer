@@ -589,7 +589,22 @@ function startPlayer(cameraId, videoEl) {
         if (status.ready) {
           const el = document.getElementById(`status-${cameraId}`);
           if (el) { el.style.display = "none"; el.classList.remove("error"); }
-          startPlayer(cameraId, videoEl);
+
+          // Always replace the video element before reconnecting.
+          // hls.destroy() cleans up HLS.js but leaves the video element's
+          // MediaSource in a potentially broken state (e.g. after fragParsingError).
+          // Reusing a poisoned element causes every subsequent HLS attach to fail
+          // even after the corrupt segment is long gone from the playlist.
+          const oldVideo = document.getElementById(`video-${cameraId}`);
+          const freshVideo = document.createElement('video');
+          freshVideo.id = `video-${cameraId}`;
+          freshVideo.muted = true;
+          freshVideo.autoplay = true;
+          freshVideo.playsInline = true;
+          if (oldVideo && oldVideo.parentNode) {
+            oldVideo.parentNode.replaceChild(freshVideo, oldVideo);
+          }
+          startPlayer(cameraId, freshVideo);
         } else {
           restartPlayer(Math.min(attempt + 1, 4));
         }
