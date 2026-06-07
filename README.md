@@ -99,6 +99,14 @@ Streams Chrome's console logs, HTTP errors (with URLs), and page navigation even
 python3 scripts/monitor-chrome.py [seconds]   # default: 120
 ```
 
+### check-feeds.py
+
+Verifies feeds are actually playing by sampling each `<video>` element's `currentTime` twice and confirming it advances. A frozen feed produces no console errors, so this is the definitive liveness check. Exits non-zero if any feed is frozen:
+
+```bash
+python3 scripts/check-feeds.py [gap_seconds]   # default gap: 4s
+```
+
 ## REST API
 
 All endpoints are served through nginx on port 8090 and proxied to the Python API internally.
