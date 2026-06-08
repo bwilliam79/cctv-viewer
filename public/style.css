@@ -286,7 +286,9 @@ button.active:hover {
 
 /* Doorbell alert overlay — black screen with video centered at natural aspect ratio */
 #doorbell-overlay {
-  display: none;
+  display: flex;
+  opacity: 0;
+  pointer-events: none;
   position: fixed;
   inset: 0;
   background: #000;
