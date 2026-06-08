@@ -3,6 +3,7 @@
 import http.server
 import json
 import os
+import queue
 import signal
 import subprocess
 import shutil
@@ -45,6 +46,23 @@ ALLOWED_URL_SCHEMES = ("rtsp", "rtsps")
 # Ensure directories exist
 CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 STREAMS_DIR.mkdir(parents=True, exist_ok=True)
+
+# SSE clients: one queue per connected browser tab. Each queue receives encoded
+# SSE messages; the handler thread drains and writes them to the response.
+_sse_clients: list = []
+_sse_lock = threading.Lock()
+
+
+def _broadcast_sse(event: str, data: dict):
+    """Push a Server-Sent Event to all connected browser clients."""
+    msg = f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
+    with _sse_lock:
+        for q in list(_sse_clients):
+            try:
+                q.put_nowait(msg)
+            except queue.Full:
+                pass
+
 
 # Active ffmpeg processes: camera_id -> subprocess.Popen, or _STARTING while a
 # spawn is in progress. The sentinel reserves the slot across the slow probe/
@@ -387,11 +405,19 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 m3u8_fresh = False
             self._json_response({"running": running, "ready": m3u8_fresh})
+        elif path == "/api/events":
+            self._handle_sse()
         else:
             self.send_error(404)
 
     def do_POST(self):
         path = urlparse(self.path).path
+
+        # Doorbell webhook — no JSON body required from the caller
+        if path == "/api/doorbell/ring":
+            self._handle_doorbell_ring()
+            return
+
         body = self._read_body()
         if body is None:
             return
@@ -536,6 +562,52 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
             self._json_response({"ok": True})
         else:
             self.send_error(404)
+
+    def _handle_sse(self):
+        """Long-lived SSE connection — blocks until client disconnects or shutdown."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        client_q: queue.Queue = queue.Queue(maxsize=32)
+        with _sse_lock:
+            _sse_clients.append(client_q)
+
+        try:
+            while not _shutdown.is_set():
+                try:
+                    msg = client_q.get(timeout=20)
+                    self.wfile.write(msg)
+                    self.wfile.flush()
+                except queue.Empty:
+                    # Keepalive comment — keeps the connection alive through nginx
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            with _sse_lock:
+                try:
+                    _sse_clients.remove(client_q)
+                except ValueError:
+                    pass
+
+    def _handle_doorbell_ring(self):
+        config = load_config()
+        doorbell = next(
+            (c for c in config["cameras"] if c.get("name", "").lower() == "doorbell"),
+            None,
+        )
+        if not doorbell:
+            self._json_response({"error": "No camera named 'Doorbell' in config"}, 404)
+            return
+        _broadcast_sse("doorbell_ring", {"camera_id": doorbell["id"]})
+        with _sse_lock:
+            n = len(_sse_clients)
+        print(f"[doorbell] Ring broadcast to {n} SSE client(s)")
+        self._json_response({"ok": True})
 
     def _parse_json(self, body):
         """Parse request body as JSON. Returns the parsed value, or None

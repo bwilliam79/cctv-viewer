@@ -7,6 +7,10 @@ let editing = false;
 let configHash = "";
 const players = new Map(); // cameraId -> { hls, video, pollTimer }
 
+let doorbellOverlayHls = null;
+let doorbellDismissTimer = null;
+let doorbellCountdownTick = null;
+
 // ============================================================
 // Backend Recovery Coordinator
 // Makes redeploys / container restarts much less painful.
@@ -316,6 +320,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initBackendHealthMonitor();
   initVersionChecker();
   initStuckRecoveryChecker();
+  initDoorbellAlert();
 
   // Fetch initial version so the checker has a baseline immediately
   fetch("/api/version", { cache: "no-store" })
@@ -862,3 +867,83 @@ document.addEventListener("visibilitychange", () => {
     }
   }
 });
+
+// --- Doorbell Alert ---
+function initDoorbellAlert() {
+  const es = new EventSource('/api/events');
+
+  es.addEventListener('doorbell_ring', (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      console.log('[doorbell] Ring event received', data);
+      showDoorbellOverlay(data.camera_id);
+    } catch {
+      console.warn('[doorbell] Failed to parse ring event', e.data);
+    }
+  });
+
+  es.onerror = () => {
+    // EventSource reconnects automatically — nothing to do here
+    console.log('[doorbell] SSE disconnected — will reconnect automatically');
+  };
+}
+
+function showDoorbellOverlay(cameraId) {
+  const overlay = document.getElementById('doorbell-overlay');
+
+  // If already showing, just reset the dismiss countdown
+  if (overlay.style.display === 'flex') {
+    _resetDoorbellCountdown();
+    return;
+  }
+
+  // Start a fresh HLS instance pointing at the doorbell stream
+  if (doorbellOverlayHls) {
+    doorbellOverlayHls.destroy();
+    doorbellOverlayHls = null;
+  }
+  const videoEl = document.getElementById('doorbell-video');
+  videoEl.src = '';
+
+  if (Hls.isSupported()) {
+    doorbellOverlayHls = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 10, enableWorker: true });
+    doorbellOverlayHls.loadSource(`/streams/${cameraId}/stream.m3u8`);
+    doorbellOverlayHls.attachMedia(videoEl);
+    doorbellOverlayHls.on(Hls.Events.MANIFEST_PARSED, () => { videoEl.play().catch(() => {}); });
+  } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+    videoEl.src = `/streams/${cameraId}/stream.m3u8`;
+    videoEl.play().catch(() => {});
+  }
+
+  overlay.style.display = 'flex';
+  _resetDoorbellCountdown();
+}
+
+function _resetDoorbellCountdown() {
+  if (doorbellDismissTimer) clearTimeout(doorbellDismissTimer);
+  if (doorbellCountdownTick) clearInterval(doorbellCountdownTick);
+
+  let seconds = 10;
+  const countdownEl = document.getElementById('doorbell-countdown');
+  if (countdownEl) countdownEl.textContent = seconds;
+
+  doorbellCountdownTick = setInterval(() => {
+    seconds--;
+    if (countdownEl) countdownEl.textContent = Math.max(0, seconds);
+  }, 1000);
+
+  doorbellDismissTimer = setTimeout(() => {
+    clearInterval(doorbellCountdownTick);
+    _hideDoorbellOverlay();
+  }, 10000);
+}
+
+function _hideDoorbellOverlay() {
+  document.getElementById('doorbell-overlay').style.display = 'none';
+  if (doorbellOverlayHls) {
+    doorbellOverlayHls.destroy();
+    doorbellOverlayHls = null;
+  }
+  const videoEl = document.getElementById('doorbell-video');
+  if (videoEl) videoEl.src = '';
+}
