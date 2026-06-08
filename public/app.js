@@ -640,7 +640,7 @@ function startPlayer(cameraId, videoEl) {
 
   if (Hls.isSupported()) {
     const hls = new Hls({
-      liveSyncDurationCount: 2,
+      liveSyncDurationCount: 1,
       liveMaxLatencyDurationCount: 4,
       maxBufferLength: 4,
       enableWorker: true,
@@ -919,7 +919,7 @@ function showDoorbellOverlay(cameraId) {
     const videoEl = document.getElementById('doorbell-video');
     if (Hls.isSupported()) {
       doorbellOverlayHls = new Hls({
-        liveSyncDurationCount: 2,
+        liveSyncDurationCount: 1,
         maxBufferLength: 4,
         enableWorker: true,
         manifestLoadingMaxRetry: 10,
