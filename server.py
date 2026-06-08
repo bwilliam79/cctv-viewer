@@ -52,6 +52,11 @@ STREAMS_DIR.mkdir(parents=True, exist_ok=True)
 _sse_clients: list = []
 _sse_lock = threading.Lock()
 
+# Doorbell auto-stop: cancelled and rescheduled on each ring so a quick
+# double-ring extends the stream rather than cutting it off early.
+_doorbell_stop_timer: threading.Timer | None = None
+_doorbell_timer_lock = threading.Lock()
+
 
 def _broadcast_sse(event: str, data: dict):
     """Push a Server-Sent Event to all connected browser clients."""
@@ -333,8 +338,10 @@ def _monitor_stream(camera: dict, proc: subprocess.Popen):
         return
 
     config = load_config()
-    still_exists = any(c["id"] == cam_id for c in config["cameras"])
-    if still_exists and not _shutdown.is_set():
+    cam_config = next((c for c in config["cameras"] if c["id"] == cam_id), None)
+    # autostart:false cameras (e.g. doorbell) are started on demand only — never
+    # auto-restarted by the monitor thread.
+    if cam_config and cam_config.get("autostart", True) and not _shutdown.is_set():
         print(f'Restarting stream for "{camera["name"]}" in 5s...')
         # Daemon=True so the pending Timer doesn't keep the interpreter alive
         # when SIGTERM arrives in the 5 s window between the exit and the fire.
@@ -595,6 +602,7 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
                     pass
 
     def _handle_doorbell_ring(self):
+        global _doorbell_stop_timer
         config = load_config()
         doorbell = next(
             (c for c in config["cameras"] if c.get("name", "").lower() == "doorbell"),
@@ -603,6 +611,21 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
         if not doorbell:
             self._json_response({"error": "No camera named 'Doorbell' in config"}, 404)
             return
+
+        # Start the stream (no-op if already running from a recent ring).
+        # Runs in a background thread so the webhook returns immediately.
+        threading.Thread(target=start_stream, args=[doorbell], daemon=True).start()
+
+        # Reset the auto-stop timer: stream stays up for 25s from the most
+        # recent ring (covers the 10s overlay + HEVC startup delay).
+        with _doorbell_timer_lock:
+            if _doorbell_stop_timer is not None:
+                _doorbell_stop_timer.cancel()
+            t = threading.Timer(25.0, stop_stream, args=[doorbell["id"]])
+            t.daemon = True
+            t.start()
+            _doorbell_stop_timer = t
+
         _broadcast_sse("doorbell_ring", {"camera_id": doorbell["id"]})
         with _sse_lock:
             n = len(_sse_clients)
@@ -651,11 +674,12 @@ class ThreadedHTTPServer(http.server.ThreadingHTTPServer):
 
 
 def main():
-    # Start streams for all saved cameras
+    # Start streams for all saved cameras (skipping autostart:false cameras)
     config = load_config()
     print(f"Loaded {len(config['cameras'])} camera(s) from config")
     for camera in config["cameras"]:
-        start_stream(camera)
+        if camera.get("autostart", True):
+            start_stream(camera)
 
     def watchdog():
         """Force-restart ffmpegs that either exited (monitor stuck on a blocked
@@ -677,7 +701,8 @@ def main():
                 if entry is _STARTING:
                     continue
                 if entry is None:
-                    threading.Thread(target=start_stream, args=[cam], daemon=True).start()
+                    if cam.get("autostart", True):
+                        threading.Thread(target=start_stream, args=[cam], daemon=True).start()
                     continue
 
                 exit_code = entry.poll()
