@@ -413,6 +413,23 @@ async function loadConfig() {
   for (const cam of cameras) {
     if (!cam.hidden) addCameraWidget(cam);
   }
+
+  _initDoorbellPlayer();
+}
+
+function _initDoorbellPlayer() {
+  const doorbell = cameras.find(c => c.hidden);
+  if (!doorbell || doorbellOverlayHls) return;
+  const videoEl = document.getElementById('doorbell-video');
+  if (!Hls.isSupported()) return;
+  doorbellOverlayHls = new Hls({
+    liveSyncDurationCount: 2,
+    maxBufferLength: 4,
+    enableWorker: true,
+  });
+  doorbellOverlayHls.loadSource(`/streams/${doorbell.id}/stream.m3u8`);
+  doorbellOverlayHls.attachMedia(videoEl);
+  doorbellOverlayHls.on(Hls.Events.MANIFEST_PARSED, () => { videoEl.play().catch(() => {}); });
 }
 
 function onLayoutChange(_event, items) {
@@ -897,30 +914,24 @@ function showDoorbellOverlay(cameraId) {
     return;
   }
 
-  // Start a fresh HLS instance pointing at the doorbell stream
-  if (doorbellOverlayHls) {
-    doorbellOverlayHls.destroy();
-    doorbellOverlayHls = null;
-  }
-  const videoEl = document.getElementById('doorbell-video');
-  videoEl.src = '';
-
-  if (Hls.isSupported()) {
-    // Allow generous manifest retries — stream starts on demand so FFmpeg may
-    // need several seconds to probe HEVC and produce the first segments.
-    doorbellOverlayHls = new Hls({
-      liveSyncDurationCount: 2,
-      maxBufferLength: 4,
-      enableWorker: true,
-      manifestLoadingMaxRetry: 10,
-      manifestLoadingRetryDelay: 1500,
-    });
-    doorbellOverlayHls.loadSource(`/streams/${cameraId}/stream.m3u8`);
-    doorbellOverlayHls.attachMedia(videoEl);
-    doorbellOverlayHls.on(Hls.Events.MANIFEST_PARSED, () => { videoEl.play().catch(() => {}); });
-  } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-    videoEl.src = `/streams/${cameraId}/stream.m3u8`;
-    videoEl.play().catch(() => {});
+  // Player is pre-warmed at load time; only create it here as a fallback
+  if (!doorbellOverlayHls) {
+    const videoEl = document.getElementById('doorbell-video');
+    if (Hls.isSupported()) {
+      doorbellOverlayHls = new Hls({
+        liveSyncDurationCount: 2,
+        maxBufferLength: 4,
+        enableWorker: true,
+        manifestLoadingMaxRetry: 10,
+        manifestLoadingRetryDelay: 1500,
+      });
+      doorbellOverlayHls.loadSource(`/streams/${cameraId}/stream.m3u8`);
+      doorbellOverlayHls.attachMedia(videoEl);
+      doorbellOverlayHls.on(Hls.Events.MANIFEST_PARSED, () => { videoEl.play().catch(() => {}); });
+    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      videoEl.src = `/streams/${cameraId}/stream.m3u8`;
+      videoEl.play().catch(() => {});
+    }
   }
 
   overlay.style.display = 'flex';
@@ -951,10 +962,5 @@ function _resetDoorbellCountdown() {
 
 function _hideDoorbellOverlay() {
   document.getElementById('doorbell-overlay').style.display = 'none';
-  if (doorbellOverlayHls) {
-    doorbellOverlayHls.destroy();
-    doorbellOverlayHls = null;
-  }
-  const videoEl = document.getElementById('doorbell-video');
-  if (videoEl) videoEl.src = '';
+  // Keep the HLS player running so the next ring shows at the live edge immediately
 }
