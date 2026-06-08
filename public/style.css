@@ -283,3 +283,38 @@ button.active:hover {
     align-items: flex-start;
   }
 }
+
+/* Doorbell alert overlay */
+#doorbell-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 50000;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#doorbell-label {
+  color: #fff;
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 12px 0 8px;
+  flex-shrink: 0;
+}
+
+#doorbell-video {
+  width: 100%;
+  flex: 1;
+  object-fit: contain;
+  min-height: 0;
+}
+
+#doorbell-footer {
+  color: #888;
+  font-size: 0.85rem;
+  padding: 8px 0 12px;
+  flex-shrink: 0;
+}
