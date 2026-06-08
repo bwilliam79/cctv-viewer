@@ -423,13 +423,25 @@ function _initDoorbellPlayer() {
   const videoEl = document.getElementById('doorbell-video');
   if (!Hls.isSupported()) return;
   doorbellOverlayHls = new Hls({
-    liveSyncDurationCount: 2,
+    liveSyncDurationCount: 1,
     maxBufferLength: 4,
     enableWorker: true,
+    manifestLoadingMaxRetry: 30,
+    manifestLoadingRetryDelay: 2000,
+    levelLoadingMaxRetry: 30,
+    levelLoadingRetryDelay: 2000,
   });
   doorbellOverlayHls.loadSource(`/streams/${doorbell.id}/stream.m3u8`);
   doorbellOverlayHls.attachMedia(videoEl);
   doorbellOverlayHls.on(Hls.Events.MANIFEST_PARSED, () => { videoEl.play().catch(() => {}); });
+  doorbellOverlayHls.on(Hls.Events.ERROR, (_event, data) => {
+    if (data.fatal) {
+      console.log('[doorbell] HLS fatal error, restarting pre-warm in 5s:', data.details);
+      if (doorbellOverlayHls) doorbellOverlayHls.destroy();
+      doorbellOverlayHls = null;
+      setTimeout(_initDoorbellPlayer, 5000);
+    }
+  });
 }
 
 function onLayoutChange(_event, items) {
