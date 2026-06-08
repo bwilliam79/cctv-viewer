@@ -948,6 +948,17 @@ function showDoorbellOverlay(cameraId) {
 
   overlay.style.opacity = '1';
   overlay.style.pointerEvents = 'auto';
+
+  // Snap to the live edge — while hidden, HLS.js may have drifted behind
+  const videoEl = document.getElementById('doorbell-video');
+  if (videoEl && videoEl.buffered.length > 0) {
+    const liveEdge = videoEl.buffered.end(videoEl.buffered.length - 1);
+    if (liveEdge - videoEl.currentTime > 0.5) {
+      videoEl.currentTime = Math.max(0, liveEdge - 0.2);
+      videoEl.play().catch(() => {});
+    }
+  }
+
   _resetDoorbellCountdown();
 }
 
