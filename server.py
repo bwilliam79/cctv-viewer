@@ -250,7 +250,7 @@ def _spawn_ffmpeg(camera: dict):
     else:
         args += ["-rtsp_transport", "tcp"]
 
-    args += ["-i", url]
+    args += ["-fflags", "nobuffer", "-i", url]
 
     if needs_reencode and vaapi_dev:
         # VAAPI hardware encode — near-zero CPU usage
