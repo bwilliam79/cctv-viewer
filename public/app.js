@@ -409,9 +409,9 @@ async function loadConfig() {
   document.getElementById("col-count").textContent = columns;
   grid.column(columns);
 
-  // Add camera widgets
+  // Add camera widgets — skip hidden cameras (streams still run on backend)
   for (const cam of cameras) {
-    addCameraWidget(cam);
+    if (!cam.hidden) addCameraWidget(cam);
   }
 }
 
@@ -475,7 +475,7 @@ async function importConfig(e) {
     document.getElementById("col-count").textContent = columns;
     grid.column(columns);
     for (const cam of cameras) {
-      addCameraWidget(cam);
+      if (!cam.hidden) addCameraWidget(cam);
     }
   } else {
     alert("Failed to import config");
@@ -923,19 +923,22 @@ function _resetDoorbellCountdown() {
   if (doorbellDismissTimer) clearTimeout(doorbellDismissTimer);
   if (doorbellCountdownTick) clearInterval(doorbellCountdownTick);
 
-  let seconds = 10;
+  const DISMISS_MS = 10000;
+  const dismissAt = Date.now() + DISMISS_MS;
   const countdownEl = document.getElementById('doorbell-countdown');
-  if (countdownEl) countdownEl.textContent = seconds;
 
-  doorbellCountdownTick = setInterval(() => {
-    seconds--;
-    if (countdownEl) countdownEl.textContent = Math.max(0, seconds);
-  }, 1000);
+  function tick() {
+    const remaining = Math.max(0, Math.ceil((dismissAt - Date.now()) / 1000));
+    if (countdownEl) countdownEl.textContent = remaining;
+  }
+
+  tick();
+  doorbellCountdownTick = setInterval(tick, 500);
 
   doorbellDismissTimer = setTimeout(() => {
     clearInterval(doorbellCountdownTick);
     _hideDoorbellOverlay();
-  }, 10000);
+  }, DISMISS_MS);
 }
 
 function _hideDoorbellOverlay() {
