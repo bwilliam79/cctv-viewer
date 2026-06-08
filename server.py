@@ -52,10 +52,6 @@ STREAMS_DIR.mkdir(parents=True, exist_ok=True)
 _sse_clients: list = []
 _sse_lock = threading.Lock()
 
-# Doorbell auto-stop: cancelled and rescheduled on each ring so a quick
-# double-ring extends the stream rather than cutting it off early.
-_doorbell_stop_timer: threading.Timer | None = None
-_doorbell_timer_lock = threading.Lock()
 
 
 def _broadcast_sse(event: str, data: dict):
@@ -602,7 +598,6 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
                     pass
 
     def _handle_doorbell_ring(self):
-        global _doorbell_stop_timer
         config = load_config()
         doorbell = next(
             (c for c in config["cameras"] if c.get("name", "").lower() == "doorbell"),
@@ -611,21 +606,6 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
         if not doorbell:
             self._json_response({"error": "No camera named 'Doorbell' in config"}, 404)
             return
-
-        # Start the stream (no-op if already running from a recent ring).
-        # Runs in a background thread so the webhook returns immediately.
-        threading.Thread(target=start_stream, args=[doorbell], daemon=True).start()
-
-        # Reset the auto-stop timer: stream stays up for 25s from the most
-        # recent ring (covers the 10s overlay + HEVC startup delay).
-        with _doorbell_timer_lock:
-            if _doorbell_stop_timer is not None:
-                _doorbell_stop_timer.cancel()
-            t = threading.Timer(25.0, stop_stream, args=[doorbell["id"]])
-            t.daemon = True
-            t.start()
-            _doorbell_stop_timer = t
-
         _broadcast_sse("doorbell_ring", {"camera_id": doorbell["id"]})
         with _sse_lock:
             n = len(_sse_clients)
