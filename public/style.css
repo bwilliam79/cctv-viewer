@@ -284,19 +284,22 @@ button.active:hover {
   }
 }
 
-/* Doorbell alert overlay — full-viewport with video filling the whole area */
+/* Doorbell alert overlay — black screen with video centered at natural aspect ratio */
 #doorbell-overlay {
   display: none;
   position: fixed;
   inset: 0;
   background: #000;
   z-index: 50000;
+  align-items: center;
+  justify-content: center;
 }
 
 #doorbell-video {
   width: 100%;
-  height: 100%;
-  object-fit: contain;
+  height: auto;
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
 }
 
 #doorbell-label {

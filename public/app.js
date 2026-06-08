@@ -892,7 +892,7 @@ function showDoorbellOverlay(cameraId) {
   const overlay = document.getElementById('doorbell-overlay');
 
   // If already showing, just reset the dismiss countdown
-  if (overlay.style.display === 'flex') {
+  if (overlay.style.display !== 'none' && overlay.style.display !== '') {
     _resetDoorbellCountdown();
     return;
   }
