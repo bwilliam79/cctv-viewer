@@ -623,9 +623,9 @@ function startPlayer(cameraId, videoEl) {
 
   if (Hls.isSupported()) {
     const hls = new Hls({
-      liveSyncDurationCount: 3,
-      liveMaxLatencyDurationCount: 8,
-      maxBufferLength: 20,
+      liveSyncDurationCount: 2,
+      liveMaxLatencyDurationCount: 4,
+      maxBufferLength: 4,
       enableWorker: true,
       lowLatencyMode: false,
     });
@@ -909,8 +909,8 @@ function showDoorbellOverlay(cameraId) {
     // Allow generous manifest retries — stream starts on demand so FFmpeg may
     // need several seconds to probe HEVC and produce the first segments.
     doorbellOverlayHls = new Hls({
-      liveSyncDurationCount: 3,
-      maxBufferLength: 10,
+      liveSyncDurationCount: 2,
+      maxBufferLength: 4,
       enableWorker: true,
       manifestLoadingMaxRetry: 10,
       manifestLoadingRetryDelay: 1500,
