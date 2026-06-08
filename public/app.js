@@ -906,7 +906,15 @@ function showDoorbellOverlay(cameraId) {
   videoEl.src = '';
 
   if (Hls.isSupported()) {
-    doorbellOverlayHls = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 10, enableWorker: true });
+    // Allow generous manifest retries — stream starts on demand so FFmpeg may
+    // need several seconds to probe HEVC and produce the first segments.
+    doorbellOverlayHls = new Hls({
+      liveSyncDurationCount: 3,
+      maxBufferLength: 10,
+      enableWorker: true,
+      manifestLoadingMaxRetry: 10,
+      manifestLoadingRetryDelay: 1500,
+    });
     doorbellOverlayHls.loadSource(`/streams/${cameraId}/stream.m3u8`);
     doorbellOverlayHls.attachMedia(videoEl);
     doorbellOverlayHls.on(Hls.Events.MANIFEST_PARSED, () => { videoEl.play().catch(() => {}); });

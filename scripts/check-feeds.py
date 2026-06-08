@@ -10,8 +10,11 @@ Usage:
 
 Requires Chrome running with --remote-debugging-port=9222.
 """
-import json, socket, os, base64, struct, time, sys
+import json, re, socket, os, base64, struct, time, sys
 import urllib.request
+
+# Only camera UUIDs — filters out overlay video elements like #doorbell-video
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-")
 
 PORT = 9222
 GAP = float(sys.argv[1]) if len(sys.argv) > 1 else 4.0
@@ -105,7 +108,7 @@ def sample(msg_id):
 send(1, "Runtime.enable")
 recv_result(1)
 
-s1 = {v["id"]: v for v in sample(2)}
+s1 = {v["id"]: v for v in sample(2) if _UUID_RE.match(v["id"])}
 time.sleep(GAP)
 s2 = {v["id"]: v for v in sample(3)}
 sock.close()
