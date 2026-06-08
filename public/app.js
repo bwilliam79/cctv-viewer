@@ -909,7 +909,7 @@ function showDoorbellOverlay(cameraId) {
   const overlay = document.getElementById('doorbell-overlay');
 
   // If already showing, just reset the dismiss countdown
-  if (overlay.style.display !== 'none' && overlay.style.display !== '') {
+  if (overlay.style.opacity === '1') {
     _resetDoorbellCountdown();
     return;
   }
@@ -934,7 +934,8 @@ function showDoorbellOverlay(cameraId) {
     }
   }
 
-  overlay.style.display = 'flex';
+  overlay.style.opacity = '1';
+  overlay.style.pointerEvents = 'auto';
   _resetDoorbellCountdown();
 }
 
@@ -961,6 +962,8 @@ function _resetDoorbellCountdown() {
 }
 
 function _hideDoorbellOverlay() {
-  document.getElementById('doorbell-overlay').style.display = 'none';
+  const overlay = document.getElementById('doorbell-overlay');
+  overlay.style.opacity = '0';
+  overlay.style.pointerEvents = 'none';
   // Keep the HLS player running so the next ring shows at the live edge immediately
 }
