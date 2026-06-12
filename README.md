@@ -80,8 +80,19 @@ google-chrome --kiosk --no-first-run --disable-session-crashed-bubble \
   --remote-debugging-port=9222 \
   --user-data-dir=/home/<user>/.config/chrome-kiosk \
   --ozone-platform=wayland \
+  --disable-features=VaapiVideoDecoder \
+  --ignore-gpu-blocklist \
   http://localhost:8090
 ```
+
+> **Video decode is intentionally software, not VAAPI.** With hardware decode
+> enabled, Chrome's zero-copy video-overlay planes wedge on a display power/mode
+> event: the streams keep decoding (currentTime advances, `check-feeds.py` reports
+> live) but the picture freezes on screen, and only a full Chrome restart clears
+> it. Forcing software decode takes video off the hardware-overlay path and
+> eliminates that freeze. 720p×N software decode is cheap; do **not** re-add
+> `VaapiVideoDecoder` to `--enable-features`. (Server-side VAAPI *encode* in the
+> ffmpeg container is separate and unaffected.)
 
 ### reload-chrome.py
 
