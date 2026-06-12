@@ -101,10 +101,29 @@ python3 scripts/monitor-chrome.py [seconds]   # default: 120
 
 ### check-feeds.py
 
-Verifies feeds are actually playing by sampling each `<video>` element's `currentTime` twice and confirming it advances. A frozen feed produces no console errors, so this is the definitive liveness check. Exits non-zero if any feed is frozen:
+Verifies feeds are actually decoding by sampling each `<video>` element's `currentTime` twice and confirming it advances. A frozen feed produces no console errors, so this is the definitive *playback* liveness check. Exits non-zero if any feed's clock is frozen:
 
 ```bash
 python3 scripts/check-feeds.py [gap_seconds]   # default gap: 4s
+```
+
+### restart-chrome.sh
+
+Full Chrome process restart (kill + relaunch). Use this — **not** `reload-chrome.py` — when feeds are frozen **on screen** but `check-feeds.py` reports them live. That signature means decode is fine but Chrome's GPU compositor / zero-copy video-overlay planes have wedged (typically after a display power/mode event). A page reload only re-creates the DOM video elements; it does not reset the GPU process or its overlay planes, so only a full restart clears it. Run on the host:
+
+```bash
+ssh <user>@<host> "~/restart-chrome.sh"
+```
+
+### frame-check.py
+
+Distinguishes a **decode freeze** from a **compositor freeze**: draws each video to a canvas and reports whether the decoded pixels change, alongside whether the `currentTime` clock advances.
+
+- clock advancing + frame changing → decode is live; an on-screen freeze is a compositor/overlay wedge → use `restart-chrome.sh`
+- clock advancing + frame frozen → decode wedged → a player restart (handled in-page) or `restart-chrome.sh` applies
+
+```bash
+python3 scripts/frame-check.py
 ```
 
 ## REST API
