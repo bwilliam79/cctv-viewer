@@ -674,29 +674,40 @@ function startPlayer(cameraId, videoEl) {
     let stallCount = 0;
     const stallWatchdog = setInterval(() => {
       if (videoEl.ended) return;
+
       if (videoEl.paused) {
-        if (videoEl.readyState >= 2) {
-          // Buffer has data — soft resume (display woke, energy saver released, etc.)
-          videoEl.play().catch(() => {});
-          lastTime = -1;
-          stallCount = 0;
+        // Always attempt a soft resume — covers a display wake or energy-saver
+        // release where the buffer is still good.
+        videoEl.play().catch(() => {});
+
+        // But a soft resume is not always enough. After a long display sleep the
+        // playhead ends up at the leading edge of a buffer whose forward segments
+        // are already gone from the server's sliding-window playlist. play() then
+        // hangs forever (never resolves or rejects) and currentTime never advances,
+        // while readyState stays >=2 because of the data *behind* the playhead —
+        // which previously fooled this watchdog into looping indefinitely without
+        // ever recovering. So if currentTime stays frozen across ticks despite
+        // play(), escalate to a full restart (fresh element + reconnect to live).
+        if (videoEl.currentTime === lastTime) {
+          if (++stallCount >= 2) { stallCount = 0; restartPlayer(0, "paused-not-resuming"); }
         } else {
-          // Paused with drained buffer — HLS.js stopped fetching; restart after 15s
-          if (++stallCount >= 3) restartPlayer(0, "paused-buffer-drained");
+          stallCount = 0;
+          lastTime = videoEl.currentTime;
         }
         return;
       }
+
       // Playing — verify time is advancing
       if (videoEl.readyState >= 2) {
         if (videoEl.currentTime === lastTime) {
-          if (++stallCount >= 2) restartPlayer(0, "time-frozen");
+          if (++stallCount >= 2) { stallCount = 0; restartPlayer(0, "time-frozen"); }
         } else {
           stallCount = 0;
           lastTime = videoEl.currentTime;
         }
       } else {
         // Playing but buffer drained — count as stall
-        if (++stallCount >= 3) restartPlayer(0, "playing-buffer-drained");
+        if (++stallCount >= 3) { stallCount = 0; restartPlayer(0, "playing-buffer-drained"); }
       }
     }, 5000);
 
