@@ -10,6 +10,7 @@ const players = new Map(); // cameraId -> { hls, video, pollTimer }
 let doorbellOverlayHls = null;
 let doorbellDismissTimer = null;
 let doorbellCountdownTick = null;
+let doorbellInitInProgress = false;
 
 // ============================================================
 // Backend Recovery Coordinator
@@ -418,25 +419,52 @@ async function loadConfig() {
   _initDoorbellPlayer();
 }
 
-// The hidden doorbell feed is pre-warmed at load and kept running continuously
-// (the overlay is opacity:0, not display:none, so Chrome keeps decoding it) so a
-// ring can bring it to the foreground instantly with zero connect delay.
-//
-// IMPORTANT: errors are recovered IN PLACE. The previous version destroyed the
-// player and built a brand-new Hls() every 5s on fragParsingError; over ~a day
-// that churn leaked Chrome's decoder pool until every feed on the page wedged.
-// recoverMediaError()/startLoad() reuse the existing instance, a healthy
-// fragment resets the error budget, and an outright rebuild is rate-limited to
-// once per 30s so it can never loop.
+// Pre-warm the hidden doorbell feed and keep it running continuously (the
+// overlay is opacity:0, not display:none, so Chrome keeps decoding it) so a ring
+// can bring it to the foreground instantly with zero connect delay.
 function _initDoorbellPlayer() {
   const doorbell = cameras.find(c => c.hidden);
-  if (!doorbell || doorbellOverlayHls) return;
+  if (!doorbell || doorbellOverlayHls || doorbellInitInProgress) return;
+  doorbellInitInProgress = true;
+  _pollDoorbellReady(doorbell.id, 0);
+}
+
+// Wait for the backend stream to be serving before attaching HLS — same as the
+// grid's pollStream(). Attaching before ffmpeg has written the first playlist
+// yields a fatal manifestLoadError the player can't recover from (it sticks at
+// readyState 0). Streams take a few seconds to be ready after a container start.
+function _pollDoorbellReady(id, attempts) {
+  if (doorbellOverlayHls) { doorbellInitInProgress = false; return; }
+  fetch(`/api/cameras/${id}/status`)
+    .then(r => r.json())
+    .then(status => {
+      if (status.ready) {
+        doorbellInitInProgress = false;
+        _startDoorbellHls(id);
+      } else if (attempts < 60) {
+        setTimeout(() => _pollDoorbellReady(id, attempts + 1), 2000);
+      } else {
+        doorbellInitInProgress = false;
+      }
+    })
+    .catch(() => {
+      if (attempts < 60) setTimeout(() => _pollDoorbellReady(id, attempts + 1), 2000);
+      else doorbellInitInProgress = false;
+    });
+}
+
+// Errors recover IN PLACE. The original version destroyed the player and built a
+// brand-new Hls() every 5s on fragParsingError; over ~a day that churn leaked
+// Chrome's decoder pool until every feed on the page wedged. recoverMediaError()
+// reuses the existing instance, a healthy fragment resets the error budget, and
+// only sustained, unrecoverable failure rebuilds — rate-limited to once per 30s.
+function _startDoorbellHls(cameraId) {
   const videoEl = document.getElementById('doorbell-video');
   if (!videoEl) return;
 
   if (!Hls.isSupported()) {
     if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-      videoEl.src = `/streams/${doorbell.id}/stream.m3u8`;
+      videoEl.src = `/streams/${cameraId}/stream.m3u8`;
       videoEl.play().catch(() => {});
     }
     return;
@@ -451,26 +479,25 @@ function _initDoorbellPlayer() {
     levelLoadingMaxRetry: 30,
     levelLoadingRetryDelay: 2000,
   });
-  doorbellOverlayHls.loadSource(`/streams/${doorbell.id}/stream.m3u8`);
+  doorbellOverlayHls.loadSource(`/streams/${cameraId}/stream.m3u8`);
   doorbellOverlayHls.attachMedia(videoEl);
   doorbellOverlayHls.on(Hls.Events.MANIFEST_PARSED, () => { videoEl.play().catch(() => {}); });
 
   let mediaErrCount = 0;
   let rebuildTimer = null;
-  // A successfully buffered fragment means we're healthy again — reset the
-  // budget so only *sustained* failure ever escalates to a rebuild.
+  // A successfully buffered fragment means we're healthy — reset the budget so
+  // only *sustained* failure ever escalates to a rebuild.
   doorbellOverlayHls.on(Hls.Events.FRAG_BUFFERED, () => { mediaErrCount = 0; });
   doorbellOverlayHls.on(Hls.Events.ERROR, (_event, data) => {
     if (!data.fatal) return;
-    if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-      console.log(`[doorbell] network error (${data.details}); resuming load in place`);
-      try { doorbellOverlayHls.startLoad(); return; } catch { /* fall through */ }
-    } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaErrCount < 3) {
+    if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaErrCount < 3) {
       mediaErrCount++;
       console.log(`[doorbell] media error (${data.details}); recoverMediaError ${mediaErrCount}/3`);
       try { doorbellOverlayHls.recoverMediaError(); return; } catch { /* fall through */ }
     }
-    // Last resort — rebuild, but never more than once per 30s (no churn).
+    // Network death or repeated media failure: rebuild from scratch — this
+    // re-polls readiness and reloads the manifest (startLoad() can't recover a
+    // fatal manifestLoadError). Rate-limited to once per 30s so it can't churn.
     if (rebuildTimer) return;
     console.log(`[doorbell] unrecoverable (${data.details}); rebuilding pre-warm in 30s`);
     try { doorbellOverlayHls.destroy(); } catch { /* ignore */ }
