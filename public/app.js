@@ -414,61 +414,69 @@ async function loadConfig() {
     if (!cam.hidden) addCameraWidget(cam);
   }
 
+  // Pre-warm the hidden doorbell feed so a ring brings it up with no delay.
+  _initDoorbellPlayer();
 }
 
-// The doorbell player is created lazily when a ring fires (see
-// showDoorbellOverlay) and destroyed when the overlay dismisses. It is NOT
-// pre-warmed or kept alive between rings: a permanent extra HLS player, plus
-// its unbounded restart loop on fragParsingError, churned and leaked Chrome's
-// decoder pool over ~a day until every video element on the page wedged
-// (all paused, play() unable to revive). Steady state is now 4 grid decoders.
-function _createDoorbellPlayer(cameraId) {
+// The hidden doorbell feed is pre-warmed at load and kept running continuously
+// (the overlay is opacity:0, not display:none, so Chrome keeps decoding it) so a
+// ring can bring it to the foreground instantly with zero connect delay.
+//
+// IMPORTANT: errors are recovered IN PLACE. The previous version destroyed the
+// player and built a brand-new Hls() every 5s on fragParsingError; over ~a day
+// that churn leaked Chrome's decoder pool until every feed on the page wedged.
+// recoverMediaError()/startLoad() reuse the existing instance, a healthy
+// fragment resets the error budget, and an outright rebuild is rate-limited to
+// once per 30s so it can never loop.
+function _initDoorbellPlayer() {
+  const doorbell = cameras.find(c => c.hidden);
+  if (!doorbell || doorbellOverlayHls) return;
   const videoEl = document.getElementById('doorbell-video');
   if (!videoEl) return;
 
-  if (Hls.isSupported()) {
-    _destroyDoorbellPlayer(); // never stack instances
-    doorbellOverlayHls = new Hls({
-      liveSyncDurationCount: 1,
-      maxBufferLength: 4,
-      enableWorker: true,
-      manifestLoadingMaxRetry: 6,
-      manifestLoadingRetryDelay: 1000,
-      levelLoadingMaxRetry: 6,
-      levelLoadingRetryDelay: 1000,
-    });
-    doorbellOverlayHls.loadSource(`/streams/${cameraId}/stream.m3u8`);
-    doorbellOverlayHls.attachMedia(videoEl);
-    doorbellOverlayHls.on(Hls.Events.MANIFEST_PARSED, () => { videoEl.play().catch(() => {}); });
-
-    let doorbellRetries = 0;
-    doorbellOverlayHls.on(Hls.Events.ERROR, (_event, data) => {
-      if (!data.fatal) return;
-      // Bounded, in-place recovery only while the overlay is actually showing.
-      // No infinite background destroy/recreate loop.
-      const overlay = document.getElementById('doorbell-overlay');
-      const showing = overlay && overlay.style.opacity === '1';
-      if (showing && doorbellRetries < 3 && data.type !== Hls.ErrorTypes.OTHER_ERROR) {
-        doorbellRetries++;
-        console.log(`[doorbell] fatal (${data.details}); recovering ${doorbellRetries}/3`);
-        try { doorbellOverlayHls.recoverMediaError(); return; } catch { /* fall through */ }
-      }
-      console.log(`[doorbell] fatal (${data.details}); destroying player`);
-      _destroyDoorbellPlayer();
-    });
-  } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-    videoEl.src = `/streams/${cameraId}/stream.m3u8`;
-    videoEl.play().catch(() => {});
+  if (!Hls.isSupported()) {
+    if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      videoEl.src = `/streams/${doorbell.id}/stream.m3u8`;
+      videoEl.play().catch(() => {});
+    }
+    return;
   }
-}
 
-function _destroyDoorbellPlayer() {
-  if (doorbellOverlayHls) {
+  doorbellOverlayHls = new Hls({
+    liveSyncDurationCount: 1,
+    maxBufferLength: 4,
+    enableWorker: true,
+    manifestLoadingMaxRetry: 30,
+    manifestLoadingRetryDelay: 2000,
+    levelLoadingMaxRetry: 30,
+    levelLoadingRetryDelay: 2000,
+  });
+  doorbellOverlayHls.loadSource(`/streams/${doorbell.id}/stream.m3u8`);
+  doorbellOverlayHls.attachMedia(videoEl);
+  doorbellOverlayHls.on(Hls.Events.MANIFEST_PARSED, () => { videoEl.play().catch(() => {}); });
+
+  let mediaErrCount = 0;
+  let rebuildTimer = null;
+  // A successfully buffered fragment means we're healthy again — reset the
+  // budget so only *sustained* failure ever escalates to a rebuild.
+  doorbellOverlayHls.on(Hls.Events.FRAG_BUFFERED, () => { mediaErrCount = 0; });
+  doorbellOverlayHls.on(Hls.Events.ERROR, (_event, data) => {
+    if (!data.fatal) return;
+    if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+      console.log(`[doorbell] network error (${data.details}); resuming load in place`);
+      try { doorbellOverlayHls.startLoad(); return; } catch { /* fall through */ }
+    } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaErrCount < 3) {
+      mediaErrCount++;
+      console.log(`[doorbell] media error (${data.details}); recoverMediaError ${mediaErrCount}/3`);
+      try { doorbellOverlayHls.recoverMediaError(); return; } catch { /* fall through */ }
+    }
+    // Last resort — rebuild, but never more than once per 30s (no churn).
+    if (rebuildTimer) return;
+    console.log(`[doorbell] unrecoverable (${data.details}); rebuilding pre-warm in 30s`);
     try { doorbellOverlayHls.destroy(); } catch { /* ignore */ }
     doorbellOverlayHls = null;
-  }
-  const videoEl = document.getElementById('doorbell-video');
-  if (videoEl) { try { videoEl.removeAttribute('src'); videoEl.load(); } catch { /* ignore */ } }
+    rebuildTimer = setTimeout(() => { rebuildTimer = null; _initDoorbellPlayer(); }, 30000);
+  });
 }
 
 function onLayoutChange(_event, items) {
@@ -964,8 +972,9 @@ function showDoorbellOverlay(cameraId) {
     return;
   }
 
-  // Create the player lazily for this ring (not pre-warmed between rings).
-  _createDoorbellPlayer(cameraId);
+  // Player is pre-warmed at load; only create as a fallback if it's missing
+  // (e.g. it was torn down by the rate-limited rebuild path and hasn't returned).
+  if (!doorbellOverlayHls) _initDoorbellPlayer();
 
   overlay.style.opacity = '1';
   overlay.style.pointerEvents = 'auto';
@@ -1009,6 +1018,5 @@ function _hideDoorbellOverlay() {
   const overlay = document.getElementById('doorbell-overlay');
   overlay.style.opacity = '0';
   overlay.style.pointerEvents = 'none';
-  // Tear down the player so it is not a permanent extra decoder between rings.
-  _destroyDoorbellPlayer();
+  // Keep the pre-warmed player running so the next ring shows instantly.
 }
