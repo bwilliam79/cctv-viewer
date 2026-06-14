@@ -80,19 +80,23 @@ google-chrome --kiosk --no-first-run --disable-session-crashed-bubble \
   --remote-debugging-port=9222 \
   --user-data-dir=/home/<user>/.config/chrome-kiosk \
   --ozone-platform=wayland \
-  --disable-features=VaapiVideoDecoder \
+  --enable-features=VaapiVideoDecoder,VaapiVideoEncoder \
+  --disable-features=UseChromeOSDirectVideoDecoder \
   --ignore-gpu-blocklist \
   http://localhost:8090
 ```
 
-> **Video decode is intentionally software, not VAAPI.** With hardware decode
-> enabled, Chrome's zero-copy video-overlay planes wedge on a display power/mode
-> event: the streams keep decoding (currentTime advances, `check-feeds.py` reports
-> live) but the picture freezes on screen, and only a full Chrome restart clears
-> it. Forcing software decode takes video off the hardware-overlay path and
-> eliminates that freeze. 720p×N software decode is cheap; do **not** re-add
-> `VaapiVideoDecoder` to `--enable-features`. (Server-side VAAPI *encode* in the
-> ffmpeg container is separate and unaffected.)
+> **Hardware video decode (VAAPI) is enabled** for efficiency. Known rare
+> failure mode: on a display power/mode event, Chrome's zero-copy video-overlay
+> planes can wedge — the streams keep decoding (currentTime advances,
+> `check-feeds.py` reports LIVE) but the picture freezes on screen. The
+> escape hatch is `scripts/restart-chrome.sh` (full process restart). To
+> minimize the trigger, the kiosk host has display-idle disabled in GNOME
+> (`idle-delay`, `idle-dim`, `sleep-inactive-ac-timeout`, screensaver idle, and
+> `logind IdleAction`). If this freeze becomes frequent, falling back to
+> software decode eliminates the class — remove `VaapiVideoDecoder` from
+> `--enable-features` and add it to `--disable-features`. CPU cost of software
+> decode of 4×720p H.264 is modest (under a third of one core on this box).
 
 ### reload-chrome.py
 
