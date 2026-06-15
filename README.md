@@ -130,6 +130,29 @@ Full Chrome process restart (kill + relaunch). Use this — **not** `reload-chro
 ssh <user>@<host> "~/restart-chrome.sh"
 ```
 
+### freeze-watchdog.sh (with systemd timer)
+
+Auto-recovery for the kiosk: a small shell script designed to run on a short systemd timer (~5 min). Each tick runs `check-feeds.py`; if the grid is frozen on **two consecutive checks** while the backend is healthy and Chrome's debug port is up, it runs `restart-chrome.sh` to recover. Two-check threshold rides out single transient blips; the backend-down and Chrome-restarting cases are skipped without escalation. Logs to syslog under tag `cctv-watchdog`:
+
+```bash
+journalctl -t cctv-watchdog --since '1 day ago'
+```
+
+Limitations: `check-feeds.py` only inspects the four grid camera UUIDs, so a doorbell-only freeze won't trigger this. Compositor-only freezes (decoded frames updating but not painted to screen) can't be detected from inside the page — use `restart-chrome.sh` manually if you see that signature.
+
+Install on the kiosk host (as the kiosk user — uses systemd user units):
+
+```bash
+# Copy scripts (alongside the other scripts/ already installed at ~/)
+cp scripts/freeze-watchdog.sh ~/freeze-watchdog.sh && chmod +x ~/freeze-watchdog.sh
+
+# Install + enable the timer
+mkdir -p ~/.config/systemd/user
+cp scripts/cctv-watchdog.service scripts/cctv-watchdog.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now cctv-watchdog.timer
+```
+
 ### frame-check.py
 
 Distinguishes a **decode freeze** from a **compositor freeze**: draws each video to a canvas and reports whether the decoded pixels change, alongside whether the `currentTime` clock advances.
