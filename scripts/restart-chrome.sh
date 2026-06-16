@@ -29,5 +29,17 @@ if [ -z "${EXEC}" ]; then
   exit 1
 fi
 
-setsid bash -c "${EXEC}" >/tmp/chrome.log 2>&1 < /dev/null &
+# Launch Chrome via systemd-run so it lives in its own transient user unit,
+# independent of the caller's cgroup. The previous `setsid bash -c ... &`
+# version was killed when this script ran from a systemd Type=oneshot service
+# (default KillMode=control-group cleans up everything in the unit on exit),
+# leaving Chrome dead with no relaunch — verified in production on 2026-06-15.
+# Falls back to setsid only if systemd-run is missing (foreign systems).
+if command -v systemd-run >/dev/null 2>&1; then
+  systemctl --user reset-failed cctv-viewer-relaunch 2>/dev/null || true
+  systemd-run --user --unit=cctv-viewer-relaunch --collect --quiet \
+    -- bash -c "${EXEC} >/tmp/chrome.log 2>&1"
+else
+  setsid bash -c "${EXEC}" >/tmp/chrome.log 2>&1 < /dev/null &
+fi
 echo "Chrome kiosk restarted (full process). Streams reconnect once the backend check passes."
