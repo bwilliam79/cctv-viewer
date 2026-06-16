@@ -23,18 +23,48 @@
 set -u
 
 STATE_FILE="/tmp/cctv-watchdog.state"
+LAST_RESTART_FILE="/tmp/cctv-watchdog.last-restart"
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 LOG() { logger -t cctv-watchdog -- "$*"; }
 
-# Chrome debug port not up → likely mid-restart, don't escalate.
-if ! curl -sf -m 3 http://localhost:9222/json/version >/dev/null 2>&1; then
+# Don't restart Chrome more than once per RATE_LIMIT_SEC. If Chrome keeps
+# dying we want a human to look, not a tight loop hiding the cause.
+RATE_LIMIT_SEC=600
+
+try_restart() {
+  local reason="$1"
+  if [ -f "$LAST_RESTART_FILE" ]; then
+    local last_age=$(( $(date +%s) - $(stat -c %Y "$LAST_RESTART_FILE") ))
+    if [ "$last_age" -lt "$RATE_LIMIT_SEC" ]; then
+      LOG "$reason — but last restart was ${last_age}s ago (<${RATE_LIMIT_SEC}s rate limit); skipping"
+      return 0
+    fi
+  fi
+  LOG "$reason — running restart-chrome.sh"
+  touch "$LAST_RESTART_FILE"
+  "$SCRIPT_DIR/restart-chrome.sh" 2>&1 | logger -t cctv-watchdog
+}
+
+# Backend health gate — if the server's down, this is not a browser problem.
+if ! curl -sf -m 3 http://localhost:8090/api/ping >/dev/null 2>&1; then
+  LOG "backend /api/ping not reachable; skipping (server-side problem, not Chrome's)"
   rm -f "$STATE_FILE"
   exit 0
 fi
 
-# Backend not healthy → not a browser problem, don't restart Chrome over it.
-if ! curl -sf -m 3 http://localhost:8090/api/ping >/dev/null 2>&1; then
+# Chrome lifecycle:
+#   - debug port up: Chrome is running, proceed to the freeze check.
+#   - debug port down + chrome --kiosk process exists: Chrome is mid-startup or
+#     mid-restart; wait for the next tick before doing anything.
+#   - debug port down + no chrome --kiosk process: Chrome is DEAD. Restart it.
+if ! curl -sf -m 3 http://localhost:9222/json/version >/dev/null 2>&1; then
+  if pgrep -f '[c]hrome --kiosk' >/dev/null 2>&1; then
+    LOG "Chrome debug port unreachable but process exists; assuming mid-startup, skipping"
+    rm -f "$STATE_FILE"
+    exit 0
+  fi
   rm -f "$STATE_FILE"
+  try_restart "Chrome process is dead"
   exit 0
 fi
 
@@ -46,9 +76,8 @@ fi
 
 # Frozen. One miss is tolerated; two in a row escalates.
 if [ -f "$STATE_FILE" ]; then
-  LOG "feeds frozen on 2nd consecutive check; running restart-chrome.sh"
   rm -f "$STATE_FILE"
-  "$SCRIPT_DIR/restart-chrome.sh" 2>&1 | logger -t cctv-watchdog
+  try_restart "feeds frozen on 2nd consecutive check"
 else
   LOG "feeds frozen on 1st check; will recover if still frozen next run"
   : > "$STATE_FILE"
