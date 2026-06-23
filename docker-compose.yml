@@ -1,5 +1,5 @@
 services:
-  cctv-viewer:
+  app:
     build: .
     container_name: cctv-viewer
     restart: unless-stopped
