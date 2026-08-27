@@ -220,3 +220,15 @@ python server.py
 ## License
 
 MIT
+
+## PWA icons
+
+App icon is the locked bullet-cam mark (`a-bullet-cam`). Pack in `public/`:
+
+- `favicon.ico` / `favicon-16.png` / `favicon-32.png`
+- `apple-touch-icon.png` (180)
+- `icon-192.png` / `icon-512.png` / `icon-maskable-512.png`
+- `manifest.json`
+
+Wired from `public/index.html` with `?v=` cache-bust. Legacy `favicon.svg` left in place unused.
+
