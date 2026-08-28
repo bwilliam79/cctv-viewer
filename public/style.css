@@ -284,7 +284,7 @@ button.active:hover {
   }
 }
 
-/* Doorbell alert overlay — black screen with video centered at natural aspect ratio */
+/* Doorbell alert overlay — full viewport; video as large as possible, aspect preserved */
 #doorbell-overlay {
   display: flex;
   opacity: 0;
@@ -298,10 +298,10 @@ button.active:hover {
 }
 
 #doorbell-video {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
 }
 
 #doorbell-label {
