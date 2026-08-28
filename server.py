@@ -228,18 +228,24 @@ def _spawn_ffmpeg(camera: dict):
         return None
     ffmpeg_bin, ffprobe_bin = paths
 
-    # Probe the codec to decide copy vs re-encode
-    codec = probe_codec(url, ffprobe_bin)
-    needs_reencode = codec and ("hevc" in codec or "h265" in codec)
-
-    # Check for VAAPI hardware encoding support
-    vaapi_dev = detect_vaapi(ffmpeg_bin) if needs_reencode else None
+    # Probe for logs / bitstream filter. Default is remux copy (no libx264).
+    # UniFi Protect high streams are HEVC; re-encoding was burning ~70% CPU
+    # per camera. Copy into fMP4 HLS and let the kiosk Chrome/VAAPI *decode*.
+    codec = (probe_codec(url, ffprobe_bin) or "").lower()
+    is_hevc = "hevc" in codec or "h265" in codec
+    is_h264 = "h264" in codec or codec in ("avc", "avc1")
+    force_transcode = os.environ.get("CCTV_TRANSCODE", "").strip().lower() in (
+        "1", "true", "yes", "vaapi", "software",
+    )
 
     args = [ffmpeg_bin, "-y"]
 
-    if vaapi_dev:
-        args += ["-init_hw_device", f"vaapi=va:{vaapi_dev}", "-hwaccel", "vaapi",
-                 "-hwaccel_output_format", "vaapi", "-hwaccel_device", vaapi_dev]
+    vaapi_dev = None
+    if force_transcode:
+        vaapi_dev = detect_vaapi(ffmpeg_bin)
+        if vaapi_dev:
+            args += ["-init_hw_device", f"vaapi=va:{vaapi_dev}", "-hwaccel", "vaapi",
+                     "-hwaccel_output_format", "vaapi", "-hwaccel_device", vaapi_dev]
 
     if is_rtsps:
         args += [
@@ -252,17 +258,37 @@ def _spawn_ffmpeg(camera: dict):
 
     args += ["-i", url]
 
-    if needs_reencode and vaapi_dev:
-        # VAAPI hardware encode — near-zero CPU usage
+    if not force_transcode:
+        # Remux only. HEVC and H.264 both copy. fMP4 is what hls.js/Chrome MSE
+        # can ingest for HEVC (MPEG-TS HEVC is a bad match).
+        args += ["-c:v", "copy", "-an"]
+        args += [
+            "-f", "hls",
+            "-hls_time", "2",
+            "-hls_list_size", "3",
+            "-hls_flags", "delete_segments+append_list+independent_segments",
+            "-hls_segment_type", "fmp4",
+            "-hls_fmp4_init_filename", "init.mp4",
+            "-hls_segment_filename", str(output_dir / "seg_%03d.m4s"),
+            str(output_dir / "stream.m3u8"),
+        ]
+        print(f"  {codec or 'unknown'} — remux copy to fMP4 HLS (no re-encode)")
+    elif vaapi_dev:
         args += [
             "-vf", "scale_vaapi=w=-2:h=720,format=nv12|vaapi",
             "-c:v", "h264_vaapi",
             "-g", "30",
             "-sc_threshold", "0",
+            "-an",
+            "-f", "hls",
+            "-hls_time", "1",
+            "-hls_list_size", "3",
+            "-hls_flags", "delete_segments+append_list",
+            "-hls_segment_filename", str(output_dir / "segment_%03d.ts"),
+            str(output_dir / "stream.m3u8"),
         ]
-        print(f"  HEVC detected — VAAPI hardware re-encode to H.264 720p")
-    elif needs_reencode:
-        # Software fallback: re-encode to H.264 at 720p
+        print(f"  HEVC — VAAPI hardware re-encode to H.264 720p (CCTV_TRANSCODE)")
+    else:
         args += [
             "-c:v", "libx264",
             "-preset", "ultrafast",
@@ -270,25 +296,15 @@ def _spawn_ffmpeg(camera: dict):
             "-vf", "scale=-2:720",
             "-g", "30",
             "-sc_threshold", "0",
+            "-an",
+            "-f", "hls",
+            "-hls_time", "1",
+            "-hls_list_size", "3",
+            "-hls_flags", "delete_segments+append_list",
+            "-hls_segment_filename", str(output_dir / "segment_%03d.ts"),
+            str(output_dir / "stream.m3u8"),
         ]
-        print(f"  HEVC detected — software re-encoding to H.264 720p")
-    else:
-        # H.264 source: passthrough, no CPU cost
-        args += [
-            "-c:v", "copy",
-            "-bsf:v", "h264_mp4toannexb",
-        ]
-        print(f"  H.264 detected — passthrough copy")
-
-    args += [
-        "-an",
-        "-f", "hls",
-        "-hls_time", "1",
-        "-hls_list_size", "3",
-        "-hls_flags", "delete_segments+append_list",
-        "-hls_segment_filename", str(output_dir / "segment_%03d.ts"),
-        str(output_dir / "stream.m3u8"),
-    ]
+        print(f"  HEVC — software re-encode to H.264 720p (CCTV_TRANSCODE)")
 
     print(f'Starting stream for camera "{camera["name"]}" ({cam_id})')
     print(f'  Command: {" ".join(args[:6])}...')
