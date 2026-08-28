@@ -5,8 +5,8 @@ A self-hosted web interface for viewing RTSP/RTSPS camera feeds in a draggable, 
 ## Features
 
 - **Multi-camera grid** with drag-and-drop rearrangement and resizable tiles
-- **HEVC/H.265 support** — automatically detects HEVC streams and re-encodes to browser-compatible H.264
-- **VAAPI hardware encoding** — auto-detects AMD/Intel GPUs for near-zero CPU transcoding
+- **Stream copy / remux** — ffmpeg `-c copy` into fMP4 HLS (no libx264). UniFi Protect high streams are HEVC; the kiosk Chrome/VAAPI **decodes**, we do not re-encode. Set `CCTV_TRANSCODE=1` only if a cam cannot copy.
+- **VAAPI transcode leftover** — optional fallback via `CCTV_TRANSCODE=1` if remux is not viable for a feed
 - **RTSPS support** — handles TLS-encrypted RTSP streams (e.g. UniFi Protect)
 - **Persistent config** — camera URLs and layout saved to a JSON file
 - **Import/Export** — backup and restore your camera configuration
@@ -21,14 +21,14 @@ Browser <---> nginx (port 8090) <---> HLS files (.m3u8 / .ts)
                   |
                   +-- proxy --> Python API (port 8091) -- manages config & ffmpeg
                                     |
-                                    +-- ffmpeg x N (VAAPI or software encode)
+                                    +-- ffmpeg x N (remux -c copy → fMP4 HLS)
                                           |
                                           +-- RTSP camera feeds
 ```
 
 - **nginx** serves the frontend and HLS stream segments directly (high throughput, near-zero CPU)
 - **Python** handles the REST API (camera CRUD, layout persistence, stream lifecycle)
-- **ffmpeg** transcodes HEVC to H.264 via VAAPI hardware encoding when available, with software fallback
+- **ffmpeg** remuxes Protect RTSPS with `-c copy` into fMP4 HLS. No per-camera libx264 unless `CCTV_TRANSCODE=1`.
 
 ## Quick Start
 
@@ -40,9 +40,21 @@ docker compose up -d
 
 Open `http://<your-server>:8090` and add your camera RTSP URLs through the web UI.
 
-## Hardware Encoding (VAAPI)
+## Stream copy (default)
 
-VAAPI hardware encoding is auto-detected at startup. If your host has an AMD or Intel GPU with `/dev/dri/renderD128`, the container will use it automatically — no configuration needed.
+Protect RTSPS feeds on this house are **HEVC**. Re-encoding them to H.264 with libx264 (software, ~70% CPU × 5 cams) is what spun the media-server fan. Default is **remux**:
+
+```
+ffmpeg -c:v copy -an -f hls -hls_segment_type fmp4 …
+```
+
+hls.js + kiosk Chrome (`VaapiVideoDecoder`) decode HEVC. Copy cannot split segments between keyframes, so HLS chunk duration follows the camera GOP (~2s), not a 1s transcode GOP.
+
+If a specific camera cannot copy (odd codec / HLS muxer refusal), logs will show ffmpeg dying and restarting. Then set `CCTV_TRANSCODE=1` on that compose service to fall back to VAAPI H.264 or software libx264 — do not turn that on by default.
+
+## Hardware Encoding (VAAPI) — fallback only
+
+Not used unless `CCTV_TRANSCODE=1`. If the host has `/dev/dri/renderD128`, that path tries `h264_vaapi` before libx264.
 
 The entrypoint script detects the render device's group ID at runtime, so it works on any host regardless of the numeric GID.
 
