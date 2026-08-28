@@ -176,6 +176,19 @@ Distinguishes a **decode freeze** from a **compositor freeze**: draws each video
 python3 scripts/frame-check.py
 ```
 
+
+## Doorbell overlay
+
+On a UniFi doorbell ring the kiosk briefly shows the doorbell camera (10s, then back to the grid). That view is **fullscreen**: the overlay covers the whole display; the feed is sized with `object-fit: contain` so it is as large as possible without cropping or stretching (letterbox/pillarbox on black is OK).
+
+Trigger without walking to the door:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8090/api/doorbell/ring
+```
+
+(From another machine on the LAN, use the kiosk host instead of 127.0.0.1.) Physical ring still works.
+
 ## REST API
 
 All endpoints are served through nginx on port 8090 and proxied to the Python API internally.
