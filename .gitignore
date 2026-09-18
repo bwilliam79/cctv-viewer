@@ -1,0 +1,5 @@
+streams/
+node_modules/
+__pycache__/
+*.pyc
+config/cameras.json

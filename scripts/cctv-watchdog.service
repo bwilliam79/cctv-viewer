@@ -1,0 +1,7 @@
+[Unit]
+Description=cctv-viewer freeze watchdog (one-shot)
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/freeze-watchdog.sh
