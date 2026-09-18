@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    container_name: cctv-viewer
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./config:/app/config
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - API_PORT=8091
+      - CONFIG_PATH=/app/config/cameras.json
