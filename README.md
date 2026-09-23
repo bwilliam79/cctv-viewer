@@ -228,7 +228,10 @@ Camera configuration is stored in `config/cameras.json` (mounted as a Docker vol
 | `API_PORT` | `8091` | Internal port for the Python API |
 | `CONFIG_PATH` | `/app/config/cameras.json` | Path to the camera config file |
 
-### Docker Compose Options
+#
+> **Apple Silicon / arm64 hosts:** the Docker image installs BtbN `linuxarm64` ffmpeg (detected via `dpkg --print-architecture`). An amd64-only ffmpeg binary fails under Colima with black camera tiles (`qemu-x86_64` / missing `ld-linux`).
+
+## Docker Compose Options
 
 The default `docker-compose.yml` passes `/dev/dri` into the container for GPU access. If your host has no GPU or you don't need hardware encoding, you can remove the `devices` section — ffmpeg will fall back to software encoding automatically.
 
