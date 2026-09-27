@@ -796,7 +796,10 @@ function openAddModal() {
   document.getElementById("modal-title").textContent = "Add Camera";
   document.getElementById("cam-id").value = "";
   document.getElementById("cam-name").value = "";
-  document.getElementById("cam-url").value = "";
+  const urlEl = document.getElementById("cam-url");
+  urlEl.value = "";
+  urlEl.required = true;
+  urlEl.placeholder = urlEl.dataset.addPlaceholder || urlEl.placeholder;
   document.getElementById("modal-overlay").hidden = false;
   document.getElementById("cam-name").focus();
 }
@@ -807,7 +810,13 @@ function openEditModal(id) {
   document.getElementById("modal-title").textContent = "Edit Camera";
   document.getElementById("cam-id").value = cam.id;
   document.getElementById("cam-name").value = cam.name;
-  document.getElementById("cam-url").value = cam.url;
+  // The server never sends camera URLs back. Leave the field blank to keep
+  // the current one; typing a new URL replaces it.
+  const urlEl = document.getElementById("cam-url");
+  if (!urlEl.dataset.addPlaceholder) urlEl.dataset.addPlaceholder = urlEl.placeholder;
+  urlEl.value = "";
+  urlEl.required = false;
+  urlEl.placeholder = "Leave blank to keep the current URL";
   document.getElementById("modal-overlay").hidden = false;
   document.getElementById("cam-name").focus();
 }
@@ -822,14 +831,15 @@ async function onFormSubmit(e) {
   const name = document.getElementById("cam-name").value.trim();
   const url = document.getElementById("cam-url").value.trim();
 
-  if (!name || !url) return;
+  if (!name || (!id && !url)) return;
 
   if (id) {
-    // Edit existing
+    // Edit existing (send url only when a new one was typed)
+    const body = url ? { name, url } : { name };
     const resp = await fetch(`/api/cameras/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, url }),
+      body: JSON.stringify(body),
     });
     if (resp.ok) {
       const updated = await resp.json();
@@ -847,9 +857,11 @@ async function onFormSubmit(e) {
       }
 
       // Restart player if URL changed
-      destroyPlayer(id);
-      const cam = cameras.find((c) => c.id === id);
-      if (cam) pollStream(cam);
+      if (url) {
+        destroyPlayer(id);
+        const cam = cameras.find((c) => c.id === id);
+        if (cam) pollStream(cam);
+      }
     }
   } else {
     // Add new
