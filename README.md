@@ -212,11 +212,12 @@ Read it back (newest first, `limit` 1–1000, default 50):
 curl -s 'http://127.0.0.1:8090/api/doorbell/rings?limit=5'
 ```
 
-Tests (no HTTP, no real ring) run inside the image:
+Tests (no real ring, no ffmpeg; the redaction test uses a localhost HTTP server on a random
+port) run inside the image:
 
 ```bash
 docker run --rm --entrypoint sh -v "$PWD":/src:ro <cctv-viewer image> \
-  -c 'cp -r /src /tmp/app && cd /tmp/app && CONFIG_PATH=/tmp/cfg/cameras.json python -m unittest -v tests.test_ring_log'
+  -c 'cp -r /src /tmp/app && cd /tmp/app && CONFIG_PATH=/tmp/cfg/cameras.json python -m unittest -v tests.test_ring_log tests.test_public_config'
 ```
 
 ## REST API
@@ -227,8 +228,8 @@ All endpoints are served through nginx on port 8090 and proxied to the Python AP
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/cameras` | Add a camera. Body: `{"name": "...", "url": "rtsp://..."}` |
-| `PUT` | `/api/cameras/:id` | Update a camera. Body: `{"name": "...", "url": "..."}` |
+| `POST` | `/api/cameras` | Add a camera. Body: `{"name": "...", "url": "rtsp://..."}`. Response omits the URL |
+| `PUT` | `/api/cameras/:id` | Update a camera. Body: `{"name": "..."}`, plus `"url"` only to replace it (missing/blank keeps the current URL) |
 | `DELETE` | `/api/cameras/:id` | Remove a camera and stop its stream |
 | `GET` | `/api/cameras/:id/status` | Stream status: `{"running": bool, "ready": bool}` |
 
@@ -236,9 +237,9 @@ All endpoints are served through nginx on port 8090 and proxied to the Python AP
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/config` | Full config (cameras + layout) |
-| `GET` | `/api/config/download` | Download config as `cctv-config.json` attachment |
-| `POST` | `/api/config/import` | Replace entire config. Body: full config JSON |
+| `GET` | `/api/config` | Cameras + layout, **without stream URLs** (see *Camera URLs stay on the server*) |
+| `GET` | `/api/config/download` | Download the same redacted config as `cctv-config.json` |
+| `POST` | `/api/config/import` | Replace entire config. Cameras without a `url` keep the URL they already have (matched by `id`); a camera new to this server must include `url` |
 | `PUT` | `/api/layout` | Update grid layout. Body: `{"columns": N, "items": [...]}` |
 
 ### Doorbell
@@ -247,6 +248,21 @@ All endpoints are served through nginx on port 8090 and proxied to the Python AP
 |--------|----------|-------------|
 | `POST` | `/api/doorbell/ring` | Show the doorbell overlay on all clients (SSE `doorbell_ring`) and record the ring |
 | `GET` | `/api/doorbell/rings?limit=N` | Ring history, newest first: `{"rings": [...]}` (see *Ring history*) |
+
+### Camera URLs stay on the server
+
+Stream URLs usually carry credentials or an access token, so no API response includes them.
+Every camera in a response is filtered: `url` and any credential-like field (`*token*`,
+`*secret*`, `*pass*`, `*auth*`, `*key*`, `*cred*`, `*uri*`) are removed, as is any string value
+that looks like a URL. Each camera gets `"has_url": true|false` instead. ffmpeg reads the URL
+from `config/cameras.json` directly, and SSE events carry only the camera id.
+
+- The web UI's **Edit camera** form leaves the URL field blank; leave it blank to keep the
+  current URL, or type a new one to replace it.
+- **Export → Import** on the same server keeps every URL. To move cameras to a new server, add
+  each camera's `url` to the exported file before importing (or copy `config/cameras.json`).
+- `tests/test_public_config.py` runs the real handler against a config full of fake URLs and
+  tokens and fails if any response contains `rtsp`, `://`, or a token.
 
 #### Layout item format
 

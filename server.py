@@ -202,6 +202,34 @@ def validate_camera_url(url: str) -> str | None:
     return None
 
 
+# Camera stream URLs usually embed credentials or an access token, so they
+# never leave the server. Every API response goes through public_camera():
+# keys that look like secrets are dropped, as is any string value that looks
+# like a URL. Clients get `has_url` instead; ffmpeg reads the URL from the
+# config file directly.
+_SENSITIVE_KEY_RE = re.compile(r"url|uri|token|secret|passw|cred|auth|key", re.IGNORECASE)
+_URL_VALUE_RE = re.compile(r"^\s*[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+
+
+def public_camera(camera: dict) -> dict:
+    """Camera as returned by the API: no URL, no credential-like fields."""
+    out = {}
+    for key, value in camera.items():
+        if _SENSITIVE_KEY_RE.search(str(key)):
+            continue
+        if isinstance(value, str) and _URL_VALUE_RE.match(value):
+            continue
+        out[key] = value
+    out["has_url"] = bool(camera.get("url"))
+    return out
+
+
+def public_config(config: dict) -> dict:
+    """Config as returned by the API (cameras redacted, layout as-is)."""
+    cameras = [public_camera(c) for c in config.get("cameras", []) if isinstance(c, dict)]
+    return {"cameras": cameras, "layout": config.get("layout", {"columns": 3})}
+
+
 def detect_vaapi(ffmpeg_bin: str) -> str | None:
     """Check if VAAPI H.264 encoding is available. Returns render device path or None."""
     for dev in ("/dev/dri/renderD128", "/dev/dri/renderD129"):
@@ -491,9 +519,12 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
                 "version": _SERVER_VERSION
             })
         elif path == "/api/config":
-            self._json_response(load_config())
+            self._json_response(public_config(load_config()))
         elif path == "/api/config/download":
-            config = load_config()
+            # Export is redacted too. Import restores each camera's URL from
+            # the current config by id, so an export/import round trip works;
+            # a camera that is new to this server needs its "url" added.
+            config = public_config(load_config())
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Disposition", 'attachment; filename="cctv-config.json"')
@@ -569,13 +600,28 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
             config["cameras"].append(camera)
             save_config(config)
             start_stream(camera)
-            self._json_response(camera, 201)
+            self._json_response(public_camera(camera), 201)
 
         elif path == "/api/config/import":
             new_config = data
             if not isinstance(new_config.get("cameras"), list):
                 self._json_response({"error": "Invalid config format"}, 400)
                 return
+
+            # Exports carry no URLs. Restore each one from the current config
+            # by camera id; only a camera new to this server must bring its own.
+            current_urls = {
+                c.get("id"): c.get("url")
+                for c in load_config().get("cameras", [])
+                if isinstance(c, dict)
+            }
+            for cam in new_config["cameras"]:
+                if not isinstance(cam, dict):
+                    self._json_response({"error": "Invalid config format"}, 400)
+                    return
+                cam.pop("has_url", None)
+                if not (cam.get("url") or "").strip() and current_urls.get(cam.get("id")):
+                    cam["url"] = current_urls[cam.get("id")]
 
             # Validate all camera URLs *and ids* up front so a bad import can't
             # partially apply (stopping current streams and then leaving us in
@@ -633,17 +679,20 @@ class CCTVHandler(http.server.BaseHTTPRequestHandler):
                 if key in data:
                     camera[key] = data[key]
 
-            if "url" in data and data["url"] != camera["url"]:
-                url_err = validate_camera_url((data["url"] or "").strip())
+            # The API never returns URLs, so the edit form sends "url" only
+            # when the user typed a new one. Missing or blank keeps the old one.
+            new_url = (data.get("url") or "").strip()
+            if new_url and new_url != camera.get("url"):
+                url_err = validate_camera_url(new_url)
                 if url_err:
                     self._json_response({"error": url_err}, 400)
                     return
-                camera["url"] = data["url"]
+                camera["url"] = new_url
                 stop_stream(cam_id)
                 start_stream(camera)
 
             save_config(config)
-            self._json_response(camera)
+            self._json_response(public_camera(camera))
 
         elif path == "/api/layout":
             config = load_config()
