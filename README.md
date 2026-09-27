@@ -189,6 +189,36 @@ curl -sS -X POST http://127.0.0.1:8090/api/doorbell/ring
 
 (From another machine on the LAN, use the kiosk host instead of 127.0.0.1.) Physical ring still works.
 
+### Ring history
+
+Every `POST /api/doorbell/ring` is also appended as one JSON line to
+`config/doorbell-rings.jsonl` (inside the existing `./config` bind mount, so it survives
+rebuilds; override with `DOORBELL_RINGS_PATH`). The write happens on a background thread
+*after* the SSE broadcast and HTTP response, and any error is only logged
+(`[doorbell] WARNING: ...`), so it can never delay or break the overlay. The
+`[doorbell] Ring broadcast ...` log line is unchanged.
+
+Each line: `{"time":"<ISO-8601 with offset>","ts":<epoch>,"camera":"Doorbell","camera_id":"<uuid>","source_ip":"<caller>"}`
+plus, when the caller sends a UniFi Alarm Manager JSON body, `alarm_name`, `trigger` and
+`event_id` (other payload fields are ignored). Requests with an `X-Test-Ring` header are
+marked `"test":true`.
+
+Bounded on every write: lines older than 30 days and anything beyond the newest 5000
+lines are dropped, and the file is rewritten atomically (temp file + rename).
+
+Read it back (newest first, `limit` 1–1000, default 50):
+
+```bash
+curl -s 'http://127.0.0.1:8090/api/doorbell/rings?limit=5'
+```
+
+Tests (no HTTP, no real ring) run inside the image:
+
+```bash
+docker run --rm --entrypoint sh -v "$PWD":/src:ro <cctv-viewer image> \
+  -c 'cp -r /src /tmp/app && cd /tmp/app && CONFIG_PATH=/tmp/cfg/cameras.json python -m unittest -v tests.test_ring_log'
+```
+
 ## REST API
 
 All endpoints are served through nginx on port 8090 and proxied to the Python API internally.
@@ -211,6 +241,13 @@ All endpoints are served through nginx on port 8090 and proxied to the Python AP
 | `POST` | `/api/config/import` | Replace entire config. Body: full config JSON |
 | `PUT` | `/api/layout` | Update grid layout. Body: `{"columns": N, "items": [...]}` |
 
+### Doorbell
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/doorbell/ring` | Show the doorbell overlay on all clients (SSE `doorbell_ring`) and record the ring |
+| `GET` | `/api/doorbell/rings?limit=N` | Ring history, newest first: `{"rings": [...]}` (see *Ring history*) |
+
 #### Layout item format
 
 ```json
@@ -227,6 +264,7 @@ Camera configuration is stored in `config/cameras.json` (mounted as a Docker vol
 |---|---|---|
 | `API_PORT` | `8091` | Internal port for the Python API |
 | `CONFIG_PATH` | `/app/config/cameras.json` | Path to the camera config file |
+| `DOORBELL_RINGS_PATH` | `<config dir>/doorbell-rings.jsonl` | Ring history file (30-day / 5000-line cap) |
 
 #
 > **Apple Silicon / arm64 hosts:** the Docker image installs BtbN `linuxarm64` ffmpeg (detected via `dpkg --print-architecture`). An amd64-only ffmpeg binary fails under Colima with black camera tiles (`qemu-x86_64` / missing `ld-linux`).

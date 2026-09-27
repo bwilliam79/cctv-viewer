@@ -3,3 +3,5 @@ node_modules/
 __pycache__/
 *.pyc
 config/cameras.json
+config/doorbell-rings.jsonl
+config/doorbell-rings.jsonl.tmp
