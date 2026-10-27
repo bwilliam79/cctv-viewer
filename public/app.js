@@ -28,7 +28,7 @@ let versionCheckInterval = null;
 function createReconnectUI() {
   if (reconnectBanner) return;
 
-  // Purely informational banner — no button because DISPLAY_HOST is headless
+  // Purely informational banner — no button because the display host is headless
   // (no keyboard/mouse on the display running the viewer).
   reconnectBanner = document.createElement("div");
   reconnectBanner.id = "reconnect-banner";
