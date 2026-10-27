@@ -42,7 +42,7 @@ Open `http://<your-server>:8090` and add your camera RTSP URLs through the web U
 
 ## Stream copy (default)
 
-Protect RTSPS feeds on this house are **HEVC**. Re-encoding them to H.264 with libx264 (software, ~70% CPU × 5 cams) is what spun the DISPLAY_HOST fan. Default is **remux**:
+Protect RTSPS feeds on this house are **HEVC**. Re-encoding them to H.264 with libx264 (software, ~70% CPU × 5 cams) is what spun the host fan. Default is **remux**:
 
 ```
 ffmpeg -c:v copy -an -f hls -hls_segment_type fmp4 …
